@@ -1,0 +1,23 @@
+# Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  repository: one
+  github_pr_id: 1
+  number: 1
+  title: MyString
+  author: MyString
+  state: MyString
+  head_sha: MyString
+  base_branch: MyString
+  head_branch: MyString
+
+two:
+  repository: two
+  github_pr_id: 1
+  number: 1
+  title: MyString
+  author: MyString
+  state: MyString
+  head_sha: MyString
+  base_branch: MyString
+  head_branch: MyString

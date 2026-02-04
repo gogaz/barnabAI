@@ -1,0 +1,17 @@
+# Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  github_repo_id: 1
+  name: MyString
+  full_name: MyString
+  owner: MyString
+  webhook_secret: MyString
+  access_token_encrypted: MyText
+
+two:
+  github_repo_id: 1
+  name: MyString
+  full_name: MyString
+  owner: MyString
+  webhook_secret: MyString
+  access_token_encrypted: MyText

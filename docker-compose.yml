@@ -1,0 +1,198 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: jessicai_postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_DB: ${DATABASE_NAME:-jessicai_production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jessicai_network
+    restart: unless-stopped
+
+  # Redis (for Kredis if needed)
+  redis:
+    image: redis:7-alpine
+    container_name: jessicai_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - jessicai_network
+    restart: unless-stopped
+
+  # Rails Web Server
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jessicai_web
+    command: ./bin/thrust ./bin/rails server -b 0.0.0.0
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
+      REDIS_URL: redis://redis:6379/0
+      # Slack Configuration
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      # GitHub Configuration
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      # AI Provider Configuration
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
+      # Optional Encryption Keys
+      SLACK_TOKEN_ENCRYPTION_KEY: ${SLACK_TOKEN_ENCRYPTION_KEY}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY}
+      # Socket Mode (disabled in web service, runs in separate service)
+      ENABLE_SLACK_SOCKET_MODE: "false"
+      # Rails Configuration
+      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-5}
+      PORT: ${PORT:-80}
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    volumes:
+      - storage_data:/rails/storage
+      - tmp_data:/rails/tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - jessicai_network
+    restart: unless-stopped
+
+  # Background Jobs Worker (Solid Queue)
+  jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jessicai_jobs
+    command: ./bin/rails solid_queue:start
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
+      REDIS_URL: redis://redis:6379/0
+      JOB_CONCURRENCY: ${JOB_CONCURRENCY:-2}
+      # Slack Configuration
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      # GitHub Configuration
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      # AI Provider Configuration
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
+      # Optional Encryption Keys
+      SLACK_TOKEN_ENCRYPTION_KEY: ${SLACK_TOKEN_ENCRYPTION_KEY}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY}
+      # Rails Configuration
+      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+    volumes:
+      - storage_data:/rails/storage
+      - tmp_data:/rails/tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - jessicai_network
+    restart: unless-stopped
+
+  # Slack Socket Mode Service
+  slack_socket_mode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jessicai_slack_socket_mode
+    command: ./bin/rails runner "SlackService.start_socket_mode rescue puts('Socket Mode error, keeping container alive for debugging'); loop { sleep 3600 }"
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-production}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
+      REDIS_URL: redis://redis:6379/0
+      # Slack Configuration
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      # GitHub Configuration
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      # AI Provider Configuration
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
+      # Optional Encryption Keys
+      SLACK_TOKEN_ENCRYPTION_KEY: ${SLACK_TOKEN_ENCRYPTION_KEY}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY}
+      # Rails Configuration
+      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+    volumes:
+      - storage_data:/rails/storage
+      - tmp_data:/rails/tmp
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - jessicai_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  storage_data:
+    driver: local
+  tmp_data:
+    driver: local
+
+networks:
+  jessicai_network:
+    driver: bridge

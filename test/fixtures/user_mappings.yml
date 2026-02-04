@@ -1,0 +1,13 @@
+# Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  slack_user_id: MyString
+  github_username: MyString
+  first_name: MyString
+  repository: one
+
+two:
+  slack_user_id: MyString
+  github_username: MyString
+  first_name: MyString
+  repository: two

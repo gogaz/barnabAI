@@ -1,0 +1,48 @@
+#!/bin/bash -e
+
+# Wait for PostgreSQL to be ready
+wait_for_postgres() {
+  local max_attempts=30
+  local attempt=0
+  
+  until pg_isready -h "${DATABASE_HOST:-postgres}" -p "${DATABASE_PORT:-5432}" -U "${DATABASE_USERNAME:-postgres}" >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ $attempt -ge $max_attempts ]; then
+      echo "PostgreSQL is not ready after $max_attempts attempts. Exiting."
+      exit 1
+    fi
+    echo "Waiting for PostgreSQL to be ready... (attempt $attempt/$max_attempts)"
+    sleep 2
+  done
+  echo "PostgreSQL is ready!"
+}
+
+# Run database migrations for all databases
+run_migrations() {
+  echo "Running database migrations..."
+  ./bin/rails db:prepare
+  echo "Database migrations completed!"
+}
+
+# Main entrypoint logic
+main() {
+  # Wait for PostgreSQL if DATABASE_HOST is set
+  if [ -n "${DATABASE_HOST}" ]; then
+    wait_for_postgres
+  fi
+
+  # Determine the command being run
+  local cmd="$*"
+  
+  # Run migrations for web server, jobs, and socket mode services
+  if [[ "$cmd" == *"rails server"* ]] || \
+     [[ "$cmd" == *"solid_queue:start"* ]] || \
+     [[ "$cmd" == *"rails runner"* ]] && [[ "$cmd" == *"SlackService"* ]]; then
+    run_migrations
+  fi
+
+  # Execute the original command
+  exec "$@"
+}
+
+main "$@"
