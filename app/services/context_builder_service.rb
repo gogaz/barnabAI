@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 class ContextBuilderService
-  def initialize(slack_installation, user, pull_request: nil)
+  def initialize(slack_installation, user, pull_request: nil, channel_id: nil, thread_ts: nil)
     @slack_installation = slack_installation
     @user = user
     @pull_request = pull_request
+    @channel_id = channel_id
+    @thread_ts = thread_ts
   end
 
   def build
@@ -13,6 +15,7 @@ class ContextBuilderService
       user: build_user_context,
       pull_request: build_pr_context,
       conversation: build_conversation_context,
+      thread_messages: build_thread_messages_context,
       user_mappings: build_user_mappings_context
     }
   end
@@ -39,7 +42,7 @@ class ContextBuilderService
   def build_pr_context
     return nil unless @pull_request
 
-    github_service = GitHubService.new(@user)
+    github_service = GithubService.new(@user)
     pr_data = github_service.get_pull_request(@pull_request.repository, @pull_request.number)
 
     return nil unless pr_data
@@ -107,6 +110,33 @@ class ContextBuilderService
         timestamp: msg["timestamp"] || msg[:timestamp]
       }
     end
+  end
+
+  def build_thread_messages_context
+    # Fetch thread messages if thread_ts is present (works for both DMs and channels)
+    # In DMs, if thread_ts is present, it means the user is in a thread
+    return [] unless @thread_ts && @channel_id
+
+    Rails.logger.info("Fetching thread messages for channel #{@channel_id}, thread #{@thread_ts}")
+    
+    messages = SlackService.get_thread_messages(
+      @slack_installation,
+      channel: @channel_id,
+      thread_ts: @thread_ts
+    )
+
+    # Format messages for AI context
+    messages.map do |msg|
+      {
+        user: msg[:user] || msg["user"],
+        text: msg[:text] || msg["text"],
+        timestamp: msg[:ts] || msg["ts"],
+        is_bot: msg[:bot_id].present? || msg["bot_id"].present?
+      }
+    end
+  rescue StandardError => e
+    Rails.logger.error("Failed to build thread messages context: #{e.message}")
+    []
   end
 
   def build_user_mappings_context

@@ -1,6 +1,6 @@
-# JessicAI - Slack Chatbot for PR Management
+# BarnabAI - Slack Chatbot for PR Management
 
-JessicAI is an intelligent Slack assistant that helps developers manage GitHub pull requests directly from Slack. It uses AI to understand natural language commands and execute GitHub actions on your behalf.
+BarnabAI is an intelligent Slack assistant that helps developers manage GitHub pull requests directly from Slack. It uses AI to understand natural language commands and execute GitHub actions on your behalf.
 
 ## Features
 
@@ -67,7 +67,7 @@ bin/rails db:migrate
 
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps)
 2. Click "Create New App" → "From scratch"
-3. Name your app (e.g., "JessicAI") and select your workspace
+3. Name your app (e.g., "BarnabAI") and select your workspace
 4. Click "Create App"
 
 #### 3.2 Configure OAuth & Permissions
@@ -112,8 +112,10 @@ bin/rails db:migrate
 3. Scroll down to **Subscribe to bot events** and add:
    - `message.im` - Receive direct messages to the bot
    - `app_mention` - Receive mentions of the bot in channels
-   - (Optional) `message.channels` - Receive messages in public channels
-   - (Optional) `message.groups` - Receive messages in private channels
+   - `message.channels` - **Required** to receive messages in public channels (including thread replies)
+   - `message.groups` - **Required** to receive messages in private channels (including thread replies)
+   
+   **Important**: Without `message.channels` and `message.groups`, you won't receive messages sent in threads, even if the bot is mentioned or the thread is related to a PR.
 
 4. Click **Save Changes** at the bottom
 
@@ -131,7 +133,7 @@ bin/rails db:migrate
 1. Go to your GitHub account → Settings → Developer settings → OAuth Apps
 2. Click **New OAuth App**
 3. Fill in:
-   - **Application name**: JessicAI
+   - **Application name**: BarnabAI
    - **Homepage URL**: `http://localhost:3000` (or your production URL)
    - **Authorization callback URL**: `http://localhost:3000/github/oauth/callback`
 4. Click **Register application**
@@ -315,7 +317,7 @@ Or in production, use a process manager like systemd or supervisor.
 
 ## Docker Deployment
 
-JessicAI is fully containerized and production-ready with Docker Compose. This is the recommended way to deploy the application.
+BarnabAI is fully containerized and production-ready with Docker Compose. This is the recommended way to deploy the application.
 
 ### Prerequisites
 

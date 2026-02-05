@@ -58,16 +58,32 @@ class SlackService
     end
 
     # Send a message to a Slack channel
-    def send_message(slack_installation, channel:, text:, thread_ts: nil)
+    # Supports both plain text and Slack Block Kit blocks
+    def send_message(slack_installation, channel:, text: nil, blocks: nil, thread_ts: nil)
       bot_token = slack_installation.bot_token
       raise "Bot token not available for installation #{slack_installation.team_id}" unless bot_token
 
       client = Slack::Web::Client.new(token: bot_token)
 
       options = {
-        channel: channel,
-        text: text
+        channel: channel
       }
+      
+      # If blocks are provided, use them; otherwise use text
+      if blocks
+        # Parse blocks if it's a JSON string, otherwise use as-is
+        parsed_blocks = if blocks.is_a?(String)
+          JSON.parse(blocks)
+        else
+          blocks
+        end
+        options[:blocks] = parsed_blocks
+        # Fallback text for notifications (required by Slack)
+        options[:text] = text || "PR Summary"
+      else
+        options[:text] = text
+      end
+      
       options[:thread_ts] = thread_ts if thread_ts
 
       response = client.chat_postMessage(options)
@@ -84,6 +100,242 @@ class SlackService
       Rails.logger.error("Error sending Slack message: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
       raise
+    end
+
+    # Add a reaction to a Slack message
+    def add_reaction(slack_installation, channel:, timestamp:, name:)
+      bot_token = slack_installation.bot_token
+      raise "Bot token not available for installation #{slack_installation.team_id}" unless bot_token
+
+      client = Slack::Web::Client.new(token: bot_token)
+
+      response = client.reactions_add(
+        channel: channel,
+        timestamp: timestamp,
+        name: name
+      )
+
+      if response["ok"]
+        Rails.logger.info("Reaction :#{name}: added to message #{timestamp}")
+        response
+      else
+        error = response["error"] || "Unknown error"
+        Rails.logger.warn("Failed to add reaction :#{name}: #{error}")
+        # Don't raise, just log - reaction failures are not critical
+        response
+      end
+    rescue StandardError => e
+      Rails.logger.warn("Error adding reaction: #{e.message}")
+      # Don't raise - reaction failures are not critical
+      nil
+    end
+
+    # Remove a reaction from a Slack message
+    def remove_reaction(slack_installation, channel:, timestamp:, name:)
+      bot_token = slack_installation.bot_token
+      raise "Bot token not available for installation #{slack_installation.team_id}" unless bot_token
+
+      client = Slack::Web::Client.new(token: bot_token)
+
+      response = client.reactions_remove(
+        channel: channel,
+        timestamp: timestamp,
+        name: name
+      )
+
+      if response["ok"]
+        Rails.logger.info("Reaction :#{name}: removed from message #{timestamp}")
+        response
+      else
+        error = response["error"] || "Unknown error"
+        Rails.logger.warn("Failed to remove reaction :#{name}: #{error}")
+        # Don't raise, just log - reaction failures are not critical
+        response
+      end
+    rescue StandardError => e
+      Rails.logger.warn("Error removing reaction: #{e.message}")
+      # Don't raise - reaction failures are not critical
+      nil
+    end
+
+    # Get all messages from a Slack thread
+    # Returns an array of message hashes with user, text, and ts
+    def get_thread_messages(slack_installation, channel:, thread_ts:)
+      return [] unless thread_ts
+
+      bot_token = slack_installation.bot_token
+      raise "Bot token not available for installation #{slack_installation.team_id}" unless bot_token
+
+      client = Slack::Web::Client.new(token: bot_token)
+
+      response = client.conversations_replies(
+        channel: channel,
+        ts: thread_ts
+      )
+
+      if response["ok"]
+        messages = response["messages"] || []
+        Rails.logger.info("Retrieved #{messages.count} messages from thread #{thread_ts}")
+        
+        # Format messages for context
+        messages.map do |msg|
+          # Extract text from blocks if blocks exist (blocks contain the real content)
+          # The text field might just be a fallback like "PR Summary"
+          text = if msg["blocks"]
+            # Handle both array and string formats
+            blocks = if msg["blocks"].is_a?(String)
+              begin
+                JSON.parse(msg["blocks"])
+              rescue JSON::ParserError
+                Rails.logger.warn("Failed to parse blocks as JSON: #{msg["blocks"][0..100]}")
+                []
+              end
+            else
+              msg["blocks"]
+            end
+            
+            Rails.logger.info("Extracting text from blocks. Block count: #{blocks.is_a?(Array) ? blocks.count : 'not array'}")
+            Rails.logger.debug("Blocks data: #{blocks.inspect}")
+            
+            extracted = extract_text_from_slack_blocks(blocks)
+            Rails.logger.info("Extracted text length: #{extracted.length}, original text: #{msg["text"]}")
+            
+            # Use extracted text if available, otherwise fall back to text field
+            extracted.present? ? extracted : (msg["text"] || "")
+          else
+            msg["text"] || ""
+          end
+          
+          {
+            user: msg["user"],
+            text: text,
+            ts: msg["ts"],
+            thread_ts: msg["thread_ts"],
+            bot_id: msg["bot_id"]
+          }
+        end
+      else
+        error = response["error"] || "Unknown error"
+        Rails.logger.warn("Failed to get thread messages: #{error}")
+        []
+      end
+    rescue StandardError => e
+      Rails.logger.error("Error getting thread messages: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      []
+    end
+
+    # Extract text content from Slack Block Kit blocks
+    def extract_text_from_slack_blocks(blocks)
+      return "" unless blocks.is_a?(Array)
+      
+      Rails.logger.info("Extracting text from #{blocks.count} blocks")
+      Rails.logger.debug("Blocks structure: #{JSON.pretty_generate(blocks)}")
+      
+      text_parts = []
+      blocks.each do |block|
+        block_type = block["type"] || block[:type]
+        Rails.logger.debug("Processing block type: #{block_type}")
+        
+        case block_type
+        when "section"
+          # Section blocks can have text or fields
+          if block["text"]
+            extracted = extract_text_from_block_element(block["text"])
+            Rails.logger.debug("Extracted from section.text: #{extracted[0..50]}...") if extracted.present?
+            text_parts << extracted if extracted.present?
+          end
+          if block["fields"]
+            block["fields"].each do |field|
+              extracted = extract_text_from_block_element(field)
+              Rails.logger.debug("Extracted from section.field: #{extracted[0..50]}...") if extracted.present?
+              text_parts << extracted if extracted.present?
+            end
+          end
+        when "header"
+          if block["text"]
+            extracted = extract_text_from_block_element(block["text"])
+            Rails.logger.debug("Extracted from header.text: #{extracted[0..50]}...") if extracted.present?
+            text_parts << extracted if extracted.present?
+          end
+        when "context"
+          if block["elements"]
+            block["elements"].each do |element|
+              extracted = extract_text_from_block_element(element)
+              Rails.logger.debug("Extracted from context.element: #{extracted[0..50]}...") if extracted.present?
+              text_parts << extracted if extracted.present?
+            end
+          end
+        when "divider"
+          # No text in dividers
+        when "rich_text"
+          # Rich text blocks have elements array
+          if block["elements"]
+            block["elements"].each do |element|
+              extracted = extract_text_from_rich_text_element(element)
+              Rails.logger.debug("Extracted from rich_text.element: #{extracted[0..50]}...") if extracted.present?
+              text_parts << extracted if extracted.present?
+            end
+          end
+        else
+          # For other block types, try to find text field
+          if block["text"]
+            extracted = extract_text_from_block_element(block["text"])
+            Rails.logger.debug("Extracted from #{block_type}.text: #{extracted[0..50]}...") if extracted.present?
+            text_parts << extracted if extracted.present?
+          end
+        end
+      end
+      
+      result = text_parts.compact.join("\n").strip
+      Rails.logger.info("Extracted text length: #{result.length} characters")
+      Rails.logger.debug("Extracted text preview: #{result[0..200]}...") if result.present?
+      result
+    end
+    
+    # Extract text from rich text elements (used in rich_text blocks)
+    def extract_text_from_rich_text_element(element)
+      return "" unless element.is_a?(Hash)
+      
+      element_type = element["type"] || element[:type]
+      case element_type
+      when "text"
+        element["text"] || element[:text] || ""
+      when "rich_text_section"
+        if element["elements"]
+          element["elements"].map { |e| extract_text_from_rich_text_element(e) }.join("")
+        else
+          ""
+        end
+      when "rich_text_list"
+        if element["elements"]
+          element["elements"].map { |e| extract_text_from_rich_text_element(e) }.join("\n")
+        else
+          ""
+        end
+      else
+        # For other rich text element types, try to find text
+        element["text"] || element[:text] || ""
+      end
+    end
+
+    def extract_text_from_block_element(element)
+      return "" unless element
+      
+      if element.is_a?(Hash)
+        # Slack Block Kit text elements have structure: { "type": "mrkdwn", "text": "actual text" }
+        # So we need to check for the "text" key which contains the actual text content
+        text = element["text"] || element[:text]
+        
+        # If text is itself an object (nested structure), recurse
+        if text.is_a?(Hash)
+          text["text"] || text[:text] || ""
+        else
+          text || ""
+        end
+      else
+        element.to_s
+      end
     end
 
     # Get the Socket Mode running status
@@ -287,7 +539,13 @@ class SlackService
       Rails.logger.info("=" * 80)
       Rails.logger.info("📨 Received Slack Event")
       Rails.logger.info("Event Type: #{event['type']}")
+      Rails.logger.info("Event Subtype: #{event['subtype'] || 'none'}")
       Rails.logger.info("Team ID: #{team_id}")
+      Rails.logger.info("Channel Type: #{event['channel_type'] || 'unknown'}")
+      Rails.logger.info("Thread TS: #{event['thread_ts'] || 'none'}")
+      Rails.logger.info("Message TS: #{event['ts'] || 'none'}")
+      Rails.logger.info("User: #{event['user'] || 'none'}")
+      Rails.logger.info("Text: #{event['text'] || 'none'}")
       Rails.logger.info("Full Event Data: #{event.inspect}")
       Rails.logger.info("=" * 80)
 
@@ -295,7 +553,13 @@ class SlackService
       when "app_mention"
         handle_app_mention(event, team_id)
       when "message"
-        handle_message(event, team_id)
+        # Skip message subtypes (message_changed, message_deleted, etc.)
+        # We only want to process actual new messages
+        if event["subtype"]
+          Rails.logger.info("Skipping message with subtype: #{event['subtype']}")
+        else
+          handle_message(event, team_id)
+        end
       else
         Rails.logger.info("Unhandled event type: #{event['type']}")
       end
@@ -339,13 +603,27 @@ class SlackService
 
       # Extract event data
       channel_id = event_data["channel"]
-      thread_ts = event_data["thread_ts"] || event_data["ts"]
       user_id = event_data["user"]
       text = event_data["text"]
       message_ts = event_data["ts"]
+      
+      # Only use thread_ts if the message is actually in a thread
+      # A real thread means thread_ts exists and is different from message_ts
+      # In DMs, if thread_ts != message_ts, it means the user explicitly replied in a thread
+      # In channels, if thread_ts != message_ts, it's also a real thread
+      raw_thread_ts = event_data["thread_ts"]
+      
+      thread_ts = if raw_thread_ts && raw_thread_ts != message_ts
+        # This is a real thread (user explicitly replied to a message)
+        raw_thread_ts
+      else
+        # Not in a thread (message at channel/DM level)
+        nil
+      end
 
       Rails.logger.info("📝 Message Details:")
       Rails.logger.info("  Channel ID: #{channel_id}")
+      Rails.logger.info("  Channel Type: #{event_data['channel_type']}")
       Rails.logger.info("  Thread TS: #{thread_ts}")
       Rails.logger.info("  User ID: #{user_id}")
       Rails.logger.info("  Message TS: #{message_ts}")
