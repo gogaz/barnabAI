@@ -14,13 +14,12 @@ module AIProviders
       @debug_mode = false
     end
 
-    def chat_completion(messages, options = {})   
+    def chat_completion(messages, options = {})
       # Convert messages to Gemini format
       contents = format_messages_for_gemini(messages)
       puts "=" * 80
       puts "CHAT COMPLETION"
       puts "=" * 80
-
 
       # Build request body
       generation_config = {
@@ -288,7 +287,7 @@ module AIProviders
         elsif user_text.include?("?") || user_text.include?("what") || user_text.include?("how") || user_text.include?("help")
           "general_chat"
         else
-          "general_chat"
+        "general_chat"
         end
       else
         function_name

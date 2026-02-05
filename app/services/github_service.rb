@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "octokit"
+require "base64"
 
 class GithubService
   def initialize(user)
@@ -19,124 +20,146 @@ class GithubService
     client.pull_requests(repository.full_name, state: state, per_page: limit)
   end
 
+  # List PRs for a repository with since parameter (filters by updated_at)
+  def list_pull_requests_since(repository, since:, state: "all", limit: 100)
+    # Fetch PRs and filter by updated_at >= since
+    # Note: GitHub API doesn't support direct since filtering for PRs endpoint,
+    # so we fetch and filter client-side
+    prs = client.pull_requests(
+      repository.full_name,
+      state: state,
+      sort: "updated",
+      direction: "desc",
+      per_page: limit
+    )
+
+    # Filter PRs by updated_at >= since
+    prs.select { |pr| pr.updated_at >= since }
+  end
+
   # List PRs for a user across all repositories with optional filters
+  # Includes PRs created by the user AND PRs assigned to the user
   def list_user_pull_requests(username, filters: {}, limit: 50)
-    # Build search query starting with base filters
-    query_parts = ["is:pr"]
+    # GitHub Search API doesn't support OR in a single query, so we need to make two queries:
+    # 1. PRs created by the user (author:username)
+    # 2. PRs assigned to the user (assignee:username)
+    # Then merge and deduplicate the results
     
-    # Add state filter (default to open if not specified)
-    state = filters[:state] || filters["state"] || "open"
-    query_parts << "is:#{state}"
+    prs_by_id = {} # Use hash to deduplicate by repo/number
     
-    # Add author filter
-    query_parts << "author:#{username}"
-    
-    # Add repository filter(s) if specified
-    # Can be a single repository (string) or multiple repositories (array)
-    if filters[:repository] || filters["repository"]
-      repo_value = filters[:repository] || filters["repository"]
+    # Helper method to build base query parts
+    build_base_query = lambda do |filters|
+      query_parts = ["is:pr"]
       
-      if repo_value.is_a?(Array)
-        # Multiple repositories: add each one to the query
-        # GitHub Search API supports multiple repo: clauses
-        repo_value.each do |repo|
-          query_parts << "repo:#{repo}"
-        end
-      else
-        # Single repository
-        query_parts << "repo:#{repo_value}"
-      end
-    end
-    
-    # Add label filter if specified
-    if filters[:label] || filters["label"]
-      label = filters[:label] || filters["label"]
-      query_parts << "label:#{label}"
-    end
-    
-    # Add assignee filter if specified
-    if filters[:assignee] || filters["assignee"]
-      assignee = filters[:assignee] || filters["assignee"]
-      query_parts << "assignee:#{assignee}"
-    end
-    
-    # Add review status filter if specified
-    if filters[:review_status] || filters["review_status"]
-      review_status = filters[:review_status] || filters["review_status"]
-      case review_status.to_s
-      when "approved"
-        query_parts << "review:approved"
-      when "changes_requested"
-        query_parts << "review:changes_requested"
-      when "commented"
-        query_parts << "review:commented"
-      when "none"
-        query_parts << "review:none"
-      end
-    end
-    
-    query = query_parts.join(" ")
-    Rails.logger.info("Searching GitHub with query: #{query}")
-    
-    begin
-      results = client.search_issues(query, per_page: limit)
-      puts results.inspect
-    rescue Octokit::UnprocessableEntity => e
-      # Handle 422 errors (invalid query, repository not found, etc.)
-      error_message = e.message
-      Rails.logger.warn("GitHub search failed: #{error_message}")
+      # Add state filter (default to open if not specified)
+      state = filters[:state] || filters["state"] || "open"
+      query_parts << "is:#{state}"
       
-      # Check if it's a repository access issue
-      if error_message.include?("cannot be searched") || error_message.include?("do not have permission")
+      # Add repository filter(s) if specified
+      if filters[:repository] || filters["repository"]
         repo_value = filters[:repository] || filters["repository"]
-        if repo_value
-          repo_list = repo_value.is_a?(Array) ? repo_value.join(", ") : repo_value
-          raise ArgumentError, "Repository(ies) '#{repo_list}' not found or you don't have permission to access them"
+        
+        if repo_value.is_a?(Array)
+          repo_value.each do |repo|
+            query_parts << "repo:#{repo}"
+          end
         else
-          raise ArgumentError, "Search failed: #{error_message}"
+          query_parts << "repo:#{repo_value}"
         end
-      else
-        raise ArgumentError, "Invalid search query: #{error_message}"
       end
-    rescue Octokit::Error => e
-      Rails.logger.error("GitHub API error: #{e.message}")
-      raise ArgumentError, "GitHub API error: #{e.message}"
+      
+      # Add label filter if specified
+      if filters[:label] || filters["label"]
+        label = filters[:label] || filters["label"]
+        query_parts << "label:#{label}"
+      end
+      
+      # Add review status filter if specified
+      if filters[:review_status] || filters["review_status"]
+        review_status = filters[:review_status] || filters["review_status"]
+        case review_status.to_s
+        when "approved"
+          query_parts << "review:approved"
+        when "changes_requested"
+          query_parts << "review:changes_requested"
+        when "commented"
+          query_parts << "review:commented"
+        when "none"
+          query_parts << "review:none"
+        end
+      end
+      
+      query_parts
     end
     
-    # Extract PR numbers and fetch full PR details
-    prs = []
-    results.items.each do |issue|
-      # Parse repository name from issue URL
-      # Issue URL format: https://api.github.com/repos/owner/repo/issues/123
-      # Or HTML URL: https://github.com/owner/repo/pull/123
-      url = issue.repository_url || issue.html_url
-      url_parts = url.split("/")
-      
-      # Extract owner and repo from URL
-      # For API URL: .../repos/owner/repo/...
-      # For HTML URL: .../owner/repo/...
-      if url.include?("/repos/")
-        repo_index = url_parts.index("repos")
-        repo_full_name = "#{url_parts[repo_index + 1]}/#{url_parts[repo_index + 2]}"
-      else
-        # HTML URL format
-        github_index = url_parts.index("github.com") || url_parts.index("api.github.com")
-        repo_full_name = "#{url_parts[github_index + 1]}/#{url_parts[github_index + 2]}"
-      end
-      
-      pr_number = issue.number
+    # Helper method to execute search and fetch PRs
+    fetch_prs_from_query = lambda do |query|
+      Rails.logger.info("Searching GitHub with query: #{query}")
       
       begin
-        pr = client.pull_request(repo_full_name, pr_number)
-        prs << pr if pr
-      rescue Octokit::NotFound, Octokit::Error => e
-        # Skip if PR not found or other error
-        Rails.logger.warn("Failed to fetch PR ##{pr_number} from #{repo_full_name}: #{e.message}")
-        next
+        results = client.search_issues(query, per_page: limit)
+      rescue Octokit::UnprocessableEntity => e
+        error_message = e.message
+        Rails.logger.warn("GitHub search failed: #{error_message}")
+        
+        if error_message.include?("cannot be searched") || error_message.include?("do not have permission")
+          repo_value = filters[:repository] || filters["repository"]
+          if repo_value
+            repo_list = repo_value.is_a?(Array) ? repo_value.join(", ") : repo_value
+            raise ArgumentError, "Repository(ies) '#{repo_list}' not found or you don't have permission to access them"
+          else
+            raise ArgumentError, "Search failed: #{error_message}"
+          end
+        else
+          raise ArgumentError, "Invalid search query: #{error_message}"
+        end
+      rescue Octokit::Error => e
+        Rails.logger.error("GitHub API error: #{e.message}")
+        raise ArgumentError, "GitHub API error: #{e.message}"
+      end
+      
+      # Extract PR numbers and fetch full PR details
+      results.items.each do |issue|
+        url = issue.repository_url || issue.html_url
+        url_parts = url.split("/")
+        
+        if url.include?("/repos/")
+          repo_index = url_parts.index("repos")
+          repo_full_name = "#{url_parts[repo_index + 1]}/#{url_parts[repo_index + 2]}"
+        else
+          github_index = url_parts.index("github.com") || url_parts.index("api.github.com")
+          repo_full_name = "#{url_parts[github_index + 1]}/#{url_parts[github_index + 2]}"
+        end
+        
+        pr_number = issue.number
+        pr_key = "#{repo_full_name}##{pr_number}"
+        
+        # Skip if we already have this PR
+        next if prs_by_id.key?(pr_key)
+        
+        begin
+          pr = client.pull_request(repo_full_name, pr_number)
+          prs_by_id[pr_key] = pr if pr
+        rescue Octokit::NotFound, Octokit::Error => e
+          Rails.logger.warn("Failed to fetch PR ##{pr_number} from #{repo_full_name}: #{e.message}")
+          next
+        end
       end
     end
     
-    prs
+    # Query 1: PRs created by the user
+    base_query_parts = build_base_query.call(filters)
+    author_query = (base_query_parts + ["author:#{username}"]).join(" ")
+    fetch_prs_from_query.call(author_query)
+    
+    # Query 2: PRs assigned to the user (only if assignee filter is not already set)
+    unless filters[:assignee] || filters["assignee"]
+      assignee_query = (base_query_parts + ["assignee:#{username}"]).join(" ")
+      fetch_prs_from_query.call(assignee_query)
+    end
+    
+    # Return deduplicated PRs
+    prs_by_id.values
   end
 
   # Merge a PR
@@ -201,6 +224,35 @@ class GithubService
   # Get files changed in a PR
   def get_files(repository, pr_number)
     client.pull_request_files(repository.full_name, pr_number)
+  end
+
+  # Get file content from a repository
+  # Returns the file content and metadata
+  def get_file_content(repository, file_path, ref: nil)
+    options = {}
+    options[:ref] = ref if ref # ref can be a branch, tag, or commit SHA
+    
+    content = client.contents(repository.full_name, path: file_path, **options)
+    
+    # Content is base64 encoded, decode it
+    decoded_content = Base64.decode64(content.content) if content.content
+    
+    {
+      name: content.name,
+      path: content.path,
+      sha: content.sha,
+      size: content.size,
+      content: decoded_content,
+      encoding: content.encoding,
+      type: content.type, # "file", "dir", "symlink", "submodule"
+      url: content.html_url,
+      download_url: content.download_url
+    }
+  rescue Octokit::NotFound
+    nil
+  rescue Octokit::Error => e
+    Rails.logger.error("Failed to get file content: #{e.message}")
+    raise ArgumentError, "Failed to get file content: #{e.message}"
   end
 
   # Create a PR

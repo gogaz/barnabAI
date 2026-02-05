@@ -13,6 +13,7 @@ class IntentDetectionService
             "SUMMARIZE_EXISTING_PRS",
             "pull_request_details_summary",
             "start_pull_request_workflow",
+            "list_prs_by_teams",
             "ask_clarification",
             "general_chat"
           ],
@@ -36,6 +37,26 @@ class IntentDetectionService
             repository: {
               type: "string",
               description: "When intent is 'pull_request_details_summary' or 'start_pull_request_workflow', extract the repository from the user's message (format: 'owner/repo-name'). If the user mentions a repository, include it here. If no repository is mentioned but there's a PR context, use that repository. Required when intent is 'pull_request_details_summary' or 'start_pull_request_workflow' and there's no PR context."
+            },
+            teams: {
+              oneOf: [
+                {
+                  type: "string",
+                  description: "When intent is 'list_prs_by_teams', extract a single team name from the user's message (e.g., '@matera-tech/rentalbatros' or 'rentalbatros'). Only include if user mentions a single team."
+                },
+                {
+                  type: "array",
+                  items: {
+                    type: "string"
+                  },
+                  description: "When intent is 'list_prs_by_teams', extract multiple team names from the user's message (e.g., ['@matera-tech/rentalbatros', '@matera-tech/probiotics']). Only include if user mentions multiple teams."
+                }
+              ],
+              description: "When intent is 'list_prs_by_teams', extract the team name(s) from the user's message. Teams can be mentioned with or without the @ prefix (e.g., 'rentalbatros' or '@matera-tech/rentalbatros'). Required when intent is 'list_prs_by_teams'."
+            },
+            days: {
+              type: "integer",
+              description: "When intent is 'list_prs_by_teams', extract the number of days to look back for PRs. Default is 7 days if not specified. Examples: 'last 3 days' -> 3, 'past week' -> 7, 'last month' -> 30, '2 weeks' -> 14. Only include if user explicitly mentions a duration."
             },
             filters: {
               type: "object",
@@ -138,6 +159,27 @@ class IntentDetectionService
       end
     end
 
+    # Add conversation context for direct messages (DMs)
+    # Only include if we're not in a thread (no thread_messages) and conversation exists
+    conversation_messages = context[:conversation] || []
+    if conversation_messages.any? && thread_messages.empty?
+      Rails.logger.info("Including #{conversation_messages.count} conversation messages in intent detection context (DM)")
+      
+      conversation_messages.each do |conv_msg|
+        role = conv_msg[:role] || conv_msg["role"]
+        content = conv_msg[:content] || conv_msg["content"]
+        
+        # Skip if empty
+        next if content.blank?
+        
+        # Map "assistant" to "assistant" and "user" to "user"
+        messages << {
+          role: role == "assistant" ? "assistant" : "user",
+          content: content
+        }
+      end
+    end
+
     # Add the current user message
     user_message_content = build_user_message(user_message, context)
     messages << { role: "user", content: user_message_content }
@@ -157,10 +199,20 @@ class IntentDetectionService
       ""
     end
 
+    available_teams = context[:available_teams] || []
+    available_teams_context = if available_teams.any?
+      "Available teams for this workspace:\n#{available_teams.map { |t| "  - #{t}" }.join("\n")}\n\n" \
+      "When extracting team names, match the user's input to one of these available teams. " \
+      "Be flexible with typos and partial matches (e.g., 'rentalbatros' or 'rental' should match '@matera-tech/rentalbatros').\n\n"
+    else
+      ""
+    end
+
     available_intents = [
       "SUMMARIZE_EXISTING_PRS - Summarize the user's ongoing pull requests",
       "pull_request_details_summary - Get a detailed summary of a specific PR including comments, reviews, and workflow status",
-      "start_pull_request_workflow - Re-run a failed workflow for a pull request"
+      "start_pull_request_workflow - Re-run a failed workflow for a pull request",
+      "list_prs_by_teams - List all PRs that impact one or more specific teams (e.g., 'show PRs for rentalbatros', 'list PRs impacting @matera-tech/probiotics and @matera-tech/rentalbatros')"
     ].join("\n")
 
     pr_details_help = <<~HELP
@@ -172,6 +224,19 @@ class IntentDetectionService
         If no repository is mentioned but there's a PR context available, use that repository.
         The 'repository' parameter is REQUIRED when intent is 'pull_request_details_summary' or 'start_pull_request_workflow' and there's no PR context.
       - If you cannot determine both PR number and repository, use 'ask_clarification' intent instead.
+      
+      When the intent is 'list_prs_by_teams', you MUST extract:
+      - Teams: Extract team name(s) from the user's message and match them to the available teams list provided below.
+        Teams can be mentioned with or without the @ prefix (e.g., 'rentalbatros', '@matera-tech/rentalbatros').
+        IMPORTANT: Match the user's input to the closest team name from the available teams list. Be flexible with typos and partial matches.
+        Examples: If user says 'rentalbatros' or 'rental', match it to '@matera-tech/rentalbatros' from the available teams.
+        The 'teams' parameter can be a single string or an array of strings. It is REQUIRED when intent is 'list_prs_by_teams'.
+        If the user mentions multiple teams, extract all of them as an array.
+        Always use the exact team name from the available teams list (including the @ prefix if present).
+        If you cannot determine the team(s) or match them to available teams, use 'ask_clarification' intent instead.
+      - Days: Extract the number of days to look back for PRs. Default is 7 days if not specified.
+        Examples: 'last 3 days' -> 3, 'past week' -> 7, 'last month' -> 30, '2 weeks' -> 14, 'past 10 days' -> 10.
+        Only include the 'days' parameter if the user explicitly mentions a duration. If not mentioned, do not include it (default will be 7 days).
     HELP
 
     filters_help = <<~HELP
@@ -188,6 +253,7 @@ class IntentDetectionService
     "You are an intent detection system for a GitHub PR management bot. " \
     "Analyze the user's message and determine their intent.\n\n" \
     "Available intents:\n#{available_intents}\n\n" \
+    "#{available_teams_context}" \
     "#{pr_details_help}\n\n" \
     "#{filters_help}\n\n" \
     "IMPORTANT: If you are unsure about the user's intent, use 'ask_clarification' and you MUST provide a helpful clarifying question in the 'clarification_question' parameter. " \
@@ -226,6 +292,16 @@ class IntentDetectionService
     pr_number = normalized[:pr_number] || normalized["pr_number"]
     pr_number = pr_number.to_i if pr_number && pr_number.to_s.match?(/^\d+$/)
     
+    # Normalize teams - ensure it's an array if present
+    teams = normalized[:teams] || normalized["teams"]
+    if teams
+      teams = teams.is_a?(Array) ? teams : [teams]
+    end
+    
+    # Normalize days - convert to integer if present
+    days = normalized[:days] || normalized["days"]
+    days = days.to_i if days && days.to_s.match?(/^\d+$/)
+    
     result = {
       clarification_question: normalized[:clarification_question] || normalized["clarification_question"],
       response: normalized[:response] || normalized["response"],
@@ -235,6 +311,12 @@ class IntentDetectionService
     
     # Include pr_number even if nil (so it's available for checking)
     result[:pr_number] = pr_number if pr_number
+    
+    # Include teams if present
+    result[:teams] = teams if teams
+    
+    # Include days if present
+    result[:days] = days if days
     
     result.compact
   end

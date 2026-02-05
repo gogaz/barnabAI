@@ -201,9 +201,13 @@ class SlackService
             Rails.logger.info("Extracted text length: #{extracted.length}, original text: #{msg["text"]}")
             
             # Use extracted text if available, otherwise fall back to text field
-            extracted.present? ? extracted : (msg["text"] || "")
+            # Also extract URLs from the text field if it's a fallback
+            text_result = extracted.present? ? extracted : (msg["text"] || "")
+            # Extract URLs from markdown in the text result
+            extract_urls_from_markdown(text_result)
           else
-            msg["text"] || ""
+            # Extract URLs from markdown in plain text messages too
+            extract_urls_from_markdown(msg["text"] || "")
           end
           
           {
@@ -221,6 +225,72 @@ class SlackService
       end
     rescue StandardError => e
       Rails.logger.error("Error getting thread messages: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      []
+    end
+
+    # Get conversation history for a channel (for DMs)
+    # Returns an array of message hashes with user, text, and ts
+    def get_conversation_history(slack_installation, channel:, limit: 10)
+      return [] unless channel
+
+      bot_token = slack_installation.bot_token
+      raise "Bot token not available for installation #{slack_installation.team_id}" unless bot_token
+
+      client = Slack::Web::Client.new(token: bot_token)
+
+      response = client.conversations_history(
+        channel: channel,
+        limit: limit
+      )
+
+      if response["ok"]
+        messages = response["messages"] || []
+        Rails.logger.info("Retrieved #{messages.count} messages from conversation #{channel}")
+        
+        # Format messages for context (most recent first, so reverse to get chronological order)
+        messages.reverse.map do |msg|
+          # Extract text from blocks if blocks exist (blocks contain the real content)
+          # The text field might just be a fallback like "PR Summary"
+          text = if msg["blocks"]
+            # Handle both array and string formats
+            blocks = if msg["blocks"].is_a?(String)
+              begin
+                JSON.parse(msg["blocks"])
+              rescue JSON::ParserError
+                Rails.logger.warn("Failed to parse blocks as JSON: #{msg["blocks"][0..100]}")
+                []
+              end
+            else
+              msg["blocks"]
+            end
+            
+            extracted = extract_text_from_slack_blocks(blocks)
+            
+            # Use extracted text if available, otherwise fall back to text field
+            # Also extract URLs from the text field if it's a fallback
+            text_result = extracted.present? ? extracted : (msg["text"] || "")
+            # Extract URLs from markdown in the text result
+            extract_urls_from_markdown(text_result)
+          else
+            # Extract URLs from markdown in plain text messages too
+            extract_urls_from_markdown(msg["text"] || "")
+          end
+          
+          {
+            user: msg["user"],
+            text: text,
+            ts: msg["ts"],
+            bot_id: msg["bot_id"]
+          }
+        end
+      else
+        error = response["error"] || "Unknown error"
+        Rails.logger.warn("Failed to get conversation history: #{error}")
+        []
+      end
+    rescue StandardError => e
+      Rails.logger.error("Error getting conversation history: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
       []
     end
@@ -300,7 +370,19 @@ class SlackService
       element_type = element["type"] || element[:type]
       case element_type
       when "text"
-        element["text"] || element[:text] || ""
+        text = element["text"] || element[:text] || ""
+        # Extract URLs from markdown if present
+        extract_urls_from_markdown(text)
+      when "link"
+        # Rich text link element: has url and text
+        url = element["url"] || element[:url] || ""
+        link_text = element["text"] || element[:text] || ""
+        
+        if link_text.present? && link_text != url
+          "#{link_text} (#{url})"
+        else
+          url
+        end
       when "rich_text_section"
         if element["elements"]
           element["elements"].map { |e| extract_text_from_rich_text_element(e) }.join("")
@@ -315,7 +397,8 @@ class SlackService
         end
       else
         # For other rich text element types, try to find text
-        element["text"] || element[:text] || ""
+        text = element["text"] || element[:text] || ""
+        extract_urls_from_markdown(text)
       end
     end
 
@@ -329,12 +412,43 @@ class SlackService
         
         # If text is itself an object (nested structure), recurse
         if text.is_a?(Hash)
-          text["text"] || text[:text] || ""
+          text_content = text["text"] || text[:text] || ""
         else
-          text || ""
+          text_content = text || ""
         end
+        
+        # Extract URLs from markdown links in the text
+        # Slack markdown format: <url|text> or <url>
+        # We want to include both the text and the URL
+        text_with_urls = extract_urls_from_markdown(text_content)
+        
+        text_with_urls
       else
         element.to_s
+      end
+    end
+    
+    # Extract URLs from Slack markdown format and include them in the text
+    # Format: <url|text> or <url>
+    # Returns: "text (url)" or "url" if no text
+    def extract_urls_from_markdown(text)
+      return "" unless text.is_a?(String)
+      
+      # Pattern to match Slack markdown links: <url|text> or <url>
+      # This regex captures:
+      # - Group 1: URL (everything before | or >)
+      # - Group 2: Text (optional, everything between | and >)
+      text.gsub(/<([^|>]+)(?:\|([^>]+))?>/) do |match|
+        url = $1
+        link_text = $2
+        
+        if link_text && link_text != url
+          # Both text and URL: include both
+          "#{link_text} (#{url})"
+        else
+          # Only URL: just return the URL
+          url
+        end
       end
     end
 

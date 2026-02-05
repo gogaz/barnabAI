@@ -29,6 +29,9 @@ gem "eventmachine", "~> 1.2"
 # GitHub API client
 gem "octokit", "~> 7.0"
 
+# CODEOWNERS file parser
+gem "codeowner_parser"
+
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: %i[ windows jruby ]

@@ -16,7 +16,8 @@ class ContextBuilderService
       pull_request: build_pr_context,
       conversation: build_conversation_context,
       thread_messages: build_thread_messages_context,
-      user_mappings: build_user_mappings_context
+      user_mappings: build_user_mappings_context,
+      available_teams: build_available_teams_context
     }
   end
 
@@ -87,29 +88,67 @@ class ContextBuilderService
   end
 
   def build_conversation_context
-    return [] unless @pull_request
+    # For direct messages (DMs): fetch conversation history from Slack API
+    # Only include if we're not in a thread (thread_ts is nil) and we have a channel_id
+    return [] if @thread_ts || !@channel_id
 
-    slack_thread = SlackThread.find_by(
-      pull_request: @pull_request,
-      slack_installation: @slack_installation
+    Rails.logger.info("Fetching conversation history for DM channel #{@channel_id}")
+    
+    # Get bot user ID to identify bot messages
+    bot_user_id = @slack_installation.bot_user_id rescue nil
+    
+    # Fetch conversation history from Slack API
+    # Fetch more messages than needed to ensure we can find the last user message
+    slack_messages = SlackService.get_conversation_history(
+      @slack_installation,
+      channel: @channel_id,
+      limit: 20
     )
 
-    return [] unless slack_thread
+    return [] if slack_messages.empty?
 
-    conversation = Conversation.find_by(
-      user: @user,
-      slack_thread: slack_thread
-    )
-
-    return [] unless conversation&.messages
-
-    conversation.messages.map do |msg|
+    # Convert Slack messages to conversation format
+    # Determine role: bot messages are "assistant", user messages are "user"
+    messages = slack_messages.map do |msg|
+      msg_text = msg[:text] || msg["text"]
+      msg_user = msg[:user] || msg["user"]
+      is_bot = msg[:bot_id].present? || msg["bot_id"].present? || msg_user == bot_user_id
+      
       {
-        role: msg["role"] || msg[:role],
-        content: msg["content"] || msg[:content],
-        timestamp: msg["timestamp"] || msg[:timestamp]
+        role: is_bot ? "assistant" : "user",
+        content: msg_text,
+        timestamp: msg[:ts] || msg["ts"]
       }
     end
+
+    # Get last messages: at least the last 2 messages, or all messages from the last USER message onwards
+    return [] if messages.empty?
+
+    # Get the last 2 messages
+    last_2_messages = messages.last(2)
+    
+    # Check if the last user message is in the last 2 messages
+    last_user_in_last_2 = last_2_messages.any? { |msg| msg[:role] == "user" || msg["role"] == "user" }
+    
+    if last_user_in_last_2
+      # Last user message is in the last 2, return the last 2 messages
+      last_2_messages
+    else
+      # Last user message is further back, find it and return all messages from there onwards
+      last_user_index = messages.rindex { |msg| msg[:role] == "user" || msg["role"] == "user" }
+      
+      if last_user_index
+        # Return all messages from the last user message onwards
+        messages[last_user_index..-1]
+      else
+        # No user message found, return last 2 messages
+        last_2_messages
+      end
+    end
+  rescue StandardError => e
+    Rails.logger.error("Failed to build conversation context: #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n"))
+    []
   end
 
   def build_thread_messages_context
@@ -148,6 +187,23 @@ class ContextBuilderService
         first_name: mapping.first_name
       }
     end
+  end
+
+  def build_available_teams_context
+    # Get all unique teams from PRs' impacted_teams for this installation
+    teams = PullRequest.joins(:repository)
+      .where(repositories: { slack_installation_id: @slack_installation.id })
+      .where.not(impacted_teams: [])
+      .pluck(:impacted_teams)
+      .flatten
+      .uniq
+      .compact
+      .sort
+
+    teams
+  rescue StandardError => e
+    Rails.logger.error("Failed to build available teams context: #{e.message}")
+    []
   end
 
   def fetch_pr_comments(github_service)

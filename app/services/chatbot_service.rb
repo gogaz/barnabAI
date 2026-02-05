@@ -35,7 +35,7 @@ class ChatbotService
         log_chat_completion_prompt(user_message, context)
         response
       else
-        handle_general_chat(user_message, context)
+      handle_general_chat(user_message, context)
       end
     when "ask_clarification"
       handle_clarification_request(intent_result)
@@ -43,41 +43,69 @@ class ChatbotService
       handle_actionable_intent(intent_result, context)
     end
 
-    # Store conversation
-    store_conversation(user_message, response_message, channel_id, thread_ts)
+    # Handle multiple messages for SUMMARIZE_EXISTING_PRS
+    if intent_result[:intent] == "SUMMARIZE_EXISTING_PRS" && response_message.is_a?(Hash) && response_message[:multiple_messages]
+      # Send one message per PR
+      prs = response_message[:prs] || []
+      prs.each do |pr|
+        pr_message = format_pr_message(pr)
+        message_options = {
+          channel: channel_id,
+          text: pr_message
+        }
+        message_options[:thread_ts] = thread_ts if thread_ts
+        
+        SlackService.send_message(
+          @slack_installation,
+          **message_options
+        )
+      end
+      
+      # Store conversation with the first PR message as the assistant message
+      store_conversation(user_message, prs.first ? format_pr_message(prs.first) : response_message[:message], channel_id, thread_ts)
+    else
+      # Store conversation
+      store_conversation(user_message, response_message, channel_id, thread_ts)
 
-    # Send response to Slack
-    # Only reply in a thread if the original message was in a thread
-    # This ensures we maintain the same conversation level as the user
-    # Check if response_message is JSON blocks (for pull_request_details_summary)
-    message_options = {
-      channel: channel_id
-    }
-    
-    # Try to parse as JSON blocks, if it's valid JSON array, treat as blocks
-    if response_message.strip.start_with?("[") && response_message.strip.end_with?("]")
-      begin
-        parsed_blocks = JSON.parse(response_message)
-        if parsed_blocks.is_a?(Array)
-          message_options[:blocks] = response_message
-          message_options[:text] = "PR Summary" # Fallback text for notifications
-        else
+      # Send response to Slack
+      # Only reply in a thread if the original message was in a thread
+      # This ensures we maintain the same conversation level as the user
+      # Check if response_message is JSON blocks (for pull_request_details_summary)
+      message_options = {
+        channel: channel_id
+      }
+      
+      # Try to parse as JSON blocks, if it's valid JSON array, treat as blocks
+      if response_message.is_a?(String) && response_message.strip.start_with?("[") && response_message.strip.end_with?("]")
+        begin
+          parsed_blocks = JSON.parse(response_message)
+          if parsed_blocks.is_a?(Array)
+            message_options[:blocks] = response_message
+            # Determine fallback text based on intent or content
+            fallback_text = if parsed_blocks.first&.dig("type") == "header" || parsed_blocks.any? { |b| b["type"] == "section" && b.dig("text", "text")&.include?("PR") }
+              "PR Summary"
+            else
+              "Summary"
+            end
+            message_options[:text] = fallback_text
+          else
+            message_options[:text] = response_message
+          end
+        rescue JSON::ParserError
+          # Not valid JSON, treat as plain text
           message_options[:text] = response_message
         end
-      rescue JSON::ParserError
-        # Not valid JSON, treat as plain text
-        message_options[:text] = response_message
+      else
+        message_options[:text] = response_message.is_a?(Hash) ? response_message[:message] : response_message
       end
-    else
-      message_options[:text] = response_message
-    end
-    
-    message_options[:thread_ts] = thread_ts if thread_ts
+      
+      message_options[:thread_ts] = thread_ts if thread_ts
 
-    SlackService.send_message(
-      @slack_installation,
-      **message_options
-    )
+      SlackService.send_message(
+        @slack_installation,
+        **message_options
+      )
+    end
 
     response_message
   rescue NameError => e
@@ -199,9 +227,10 @@ class ChatbotService
 
     # Check if PR is required and available
     # Some intents can work with PR info from parameters/context even without @pull_request
-    # (e.g., pull_request_details_summary, start_pull_request_workflow)
+    # (e.g., pull_request_details_summary, start_pull_request_workflow, list_prs_by_teams)
     if requires_pr?(intent) && !@pull_request && intent != "SUMMARIZE_EXISTING_PRS" && 
-       intent != "pull_request_details_summary" && intent != "start_pull_request_workflow"
+       intent != "pull_request_details_summary" && intent != "start_pull_request_workflow" &&
+       intent != "list_prs_by_teams"
       return "I need a PR context to perform this action. Please use this command in a PR thread."
     end
 
@@ -210,7 +239,21 @@ class ChatbotService
     result = action_service.execute(intent, parameters)
 
     if result[:success]
-      format_success_response(intent, result)
+      # Special handling for SUMMARIZE_EXISTING_PRS - return data for multiple messages
+      if intent == "SUMMARIZE_EXISTING_PRS" && result[:data] && result[:data][:multiple_messages]
+        {
+          multiple_messages: true,
+          prs: result[:data][:prs] || [],
+          message: result[:message] || "Found pull requests"
+        }
+      else
+        response = format_success_response(intent, result)
+        # If response is an array (blocks), convert to JSON string for processing
+        if response.is_a?(Array)
+          response = response.to_json
+        end
+        response
+      end
     else
       format_error_response(result)
     end
@@ -299,6 +342,21 @@ class ChatbotService
                  "Author: #{pr_data[:author]}\n" \
                  "Comments: #{result[:data][:comments_count]}\n" \
                  "Files changed: #{result[:data][:files_count]}"
+    elsif intent == "list_prs_by_teams" && result[:data] && result[:data][:blocks]
+      # Return blocks directly if available (AI-generated summary)
+      return result[:data][:blocks]
+    elsif intent == "list_prs_by_teams" && result[:data] && result[:data][:prs]
+      # Fallback to text format if blocks not available
+      prs = result[:data][:prs]
+      teams = result[:data][:teams] || []
+      message = "Found #{prs.count} PR(s) impacting team(s): #{teams.join(', ')}\n\n"
+      prs.each do |pr|
+        message += "• ##{pr[:number]}: #{pr[:title]} (#{pr[:state]})\n"
+        message += "  Repository: #{pr[:repository]}\n"
+        message += "  Impacted teams: #{pr[:impacted_teams]&.join(', ') || 'None'}\n"
+        message += "  URL: #{pr[:url]}\n"
+        message += "  Created: #{pr[:created_at]}\n\n"
+      end
     end
 
     message
@@ -306,6 +364,32 @@ class ChatbotService
 
   def format_error_response(result)
     result[:message] || "Failed to execute action."
+  end
+
+  def format_pr_message(pr)
+    created_at = pr[:created_at]
+    created_date = if created_at.respond_to?(:strftime)
+      created_at.strftime("%Y-%m-%d")
+    elsif created_at.is_a?(String)
+      created_at
+    else
+      "unknown date"
+    end
+    
+    # Format lines changed
+    total_changes = pr[:total_changes] || (pr[:additions].to_i + pr[:deletions].to_i)
+    lines_info = if total_changes > 0
+      "+#{pr[:additions] || 0}/-#{pr[:deletions] || 0} (#{total_changes} total)"
+    else
+      "No changes"
+    end
+    
+    pr_url = pr[:url] || "https://github.com/#{pr[:repository] || 'unknown/repo'}/pull/#{pr[:number]}"
+    pr_title = pr[:title] || "PR ##{pr[:number]}"
+    
+    # Use Slack rich text format: title as link
+    "<#{pr_url}|#{pr_title}>\n" \
+    "Created: #{created_date} • Lines changed: #{lines_info}"
   end
 
   def build_github_oauth_invitation_message
@@ -335,8 +419,8 @@ class ChatbotService
   end
 
   def store_conversation(user_message, assistant_message, channel_id, thread_ts)
-    return unless @pull_request
-
+    # For PR threads: store with slack_thread
+    if @pull_request
     slack_thread = SlackThread.find_or_create_by!(
       pull_request: @pull_request,
       slack_installation: @slack_installation,
@@ -348,6 +432,16 @@ class ChatbotService
       user: @user,
       slack_thread: slack_thread
     )
+    else
+      # For direct messages (DMs): store without slack_thread
+      # Only store if we're not in a thread (thread_ts is nil)
+      return if thread_ts
+
+      conversation = Conversation.find_or_initialize_by(
+        user: @user,
+        slack_thread: nil
+      )
+    end
 
     messages = conversation.messages || []
     messages << {
