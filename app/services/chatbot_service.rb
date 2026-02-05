@@ -30,9 +30,6 @@ class ChatbotService
       # Use response from intent detection if available (saves an API call)
       response = intent_result[:parameters][:response] || intent_result[:parameters]["response"]
       if response.present?
-        Rails.logger.info("✅ Using response from intent detection (saved 1 API call)")
-        # Still log what the second prompt would have been for debugging
-        log_chat_completion_prompt(user_message, context)
         response
       else
       handle_general_chat(user_message, context)
@@ -48,7 +45,7 @@ class ChatbotService
       # Send one message per PR
       prs = response_message[:prs] || []
       prs.each do |pr|
-        pr_message = format_pr_message(pr)
+        pr_message = Formatters::PrMessageFormatter.format(pr)
         message_options = {
           channel: channel_id,
           text: pr_message
@@ -62,49 +59,22 @@ class ChatbotService
       end
       
       # Store conversation with the first PR message as the assistant message
-      store_conversation(user_message, prs.first ? format_pr_message(prs.first) : response_message[:message], channel_id, thread_ts)
+      store_conversation(user_message, prs.first ? Formatters::PrMessageFormatter.format(prs.first) : response_message[:message], channel_id, thread_ts)
     else
-      # Store conversation
-      store_conversation(user_message, response_message, channel_id, thread_ts)
+    # Store conversation
+    store_conversation(user_message, response_message, channel_id, thread_ts)
 
-      # Send response to Slack
-      # Only reply in a thread if the original message was in a thread
-      # This ensures we maintain the same conversation level as the user
-      # Check if response_message is JSON blocks (for pull_request_details_summary)
-      message_options = {
-        channel: channel_id
-      }
-      
-      # Try to parse as JSON blocks, if it's valid JSON array, treat as blocks
-      if response_message.is_a?(String) && response_message.strip.start_with?("[") && response_message.strip.end_with?("]")
-        begin
-          parsed_blocks = JSON.parse(response_message)
-          if parsed_blocks.is_a?(Array)
-            message_options[:blocks] = response_message
-            # Determine fallback text based on intent or content
-            fallback_text = if parsed_blocks.first&.dig("type") == "header" || parsed_blocks.any? { |b| b["type"] == "section" && b.dig("text", "text")&.include?("PR") }
-              "PR Summary"
-            else
-              "Summary"
-            end
-            message_options[:text] = fallback_text
-          else
-            message_options[:text] = response_message
-          end
-        rescue JSON::ParserError
-          # Not valid JSON, treat as plain text
-          message_options[:text] = response_message
-        end
-      else
-        message_options[:text] = response_message.is_a?(Hash) ? response_message[:message] : response_message
-      end
-      
-      message_options[:thread_ts] = thread_ts if thread_ts
+    # Send response to Slack
+    # Only reply in a thread if the original message was in a thread
+    # This ensures we maintain the same conversation level as the user
+    message_options = Formatters::SlackMessageFormatter.format_message_options(response_message)
+    message_options[:channel] = channel_id
+    message_options[:thread_ts] = thread_ts if thread_ts
 
-      SlackService.send_message(
-        @slack_installation,
-        **message_options
-      )
+    SlackService.send_message(
+      @slack_installation,
+      **message_options
+    )
     end
 
     response_message
@@ -112,10 +82,6 @@ class ChatbotService
     # Re-raise NameError (uninitialized constant) to avoid silent failures
     Rails.logger.error("ChatbotService NameError: #{e.message}")
     Rails.logger.error(e.backtrace.join("\n"))
-    STDERR.puts "\n" + "=" * 80
-    STDERR.puts "❌ NameError in ChatbotService: #{e.message}"
-    STDERR.puts e.backtrace.join("\n")
-    STDERR.puts "=" * 80 + "\n"
     raise
   rescue StandardError => e
     Rails.logger.error("ChatbotService error: #{e.message}")
@@ -146,66 +112,6 @@ class ChatbotService
     @ai_provider.chat_completion(messages)
   end
 
-  def log_chat_completion_prompt(user_message, context)
-    # Build and log the chat completion prompt even when using optimized response
-    # This helps with debugging to see what the second prompt would have been
-    messages = build_chat_messages(user_message, context)
-    
-    # Format messages exactly like GeminiProvider.format_messages_for_gemini does
-    system_message = nil
-    conversation_messages = []
-    
-    messages.each do |msg|
-      role = msg[:role] || msg["role"]
-      content = msg[:content] || msg["content"]
-      
-      if role == "system"
-        system_message = content
-      else
-        conversation_messages << msg
-      end
-    end
-    
-    # Format conversation messages for Gemini (convert "assistant" to "model")
-    contents = conversation_messages.map do |msg|
-      role = msg[:role] || msg["role"]
-      content = msg[:content] || msg["content"]
-      gemini_role = role == "assistant" ? "model" : "user"
-      
-      {
-        role: gemini_role,
-        parts: [
-          { text: content }
-        ]
-      }
-    end
-    
-    # Prepend system message to first user message (Gemini format)
-    if system_message && contents.any?
-      first_message = contents.first
-      if first_message[:role] == "user"
-        first_message[:parts][0][:text] = "#{system_message}\n\n#{first_message[:parts][0][:text]}"
-      end
-    end
-    
-    # Log in the same format as GeminiProvider does
-    puts "=" * 80
-    puts "CHAT COMPLETION (SKIPPED - using optimized response)"
-    puts "=" * 80
-    
-    request_body = {
-      contents: contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1000
-      }
-    }
-    
-    puts request_body.inspect
-    puts "=" * 80
-    puts "END CHAT COMPLETION (SKIPPED)"
-    puts "=" * 80
-  end
 
   def handle_clarification_request(intent_result)
     # Return the clarification question from the intent detection
@@ -247,7 +153,7 @@ class ChatbotService
           message: result[:message] || "Found pull requests"
         }
       else
-        response = format_success_response(intent, result)
+        response = Formatters::ResponseFormatter.format_success(intent, result)
         # If response is an array (blocks), convert to JSON string for processing
         if response.is_a?(Array)
           response = response.to_json
@@ -255,7 +161,7 @@ class ChatbotService
         response
       end
     else
-      format_error_response(result)
+      Formatters::ResponseFormatter.format_error(result)
     end
   end
 
@@ -330,67 +236,6 @@ class ChatbotService
     "If the user wants to perform an action, suggest the appropriate command."
   end
 
-  def format_success_response(intent, result)
-    message = result[:message] || "Action completed successfully."
-
-    # Add additional details if available
-    if result[:data] && intent == "get_pr_info"
-      pr_data = result[:data][:pr]
-      message += "\n\n" \
-                 "PR ##{pr_data[:number]}: #{pr_data[:title]}\n" \
-                 "State: #{pr_data[:state]}\n" \
-                 "Author: #{pr_data[:author]}\n" \
-                 "Comments: #{result[:data][:comments_count]}\n" \
-                 "Files changed: #{result[:data][:files_count]}"
-    elsif intent == "list_prs_by_teams" && result[:data] && result[:data][:blocks]
-      # Return blocks directly if available (AI-generated summary)
-      return result[:data][:blocks]
-    elsif intent == "list_prs_by_teams" && result[:data] && result[:data][:prs]
-      # Fallback to text format if blocks not available
-      prs = result[:data][:prs]
-      teams = result[:data][:teams] || []
-      message = "Found #{prs.count} PR(s) impacting team(s): #{teams.join(', ')}\n\n"
-      prs.each do |pr|
-        message += "• ##{pr[:number]}: #{pr[:title]} (#{pr[:state]})\n"
-        message += "  Repository: #{pr[:repository]}\n"
-        message += "  Impacted teams: #{pr[:impacted_teams]&.join(', ') || 'None'}\n"
-        message += "  URL: #{pr[:url]}\n"
-        message += "  Created: #{pr[:created_at]}\n\n"
-      end
-    end
-
-    message
-  end
-
-  def format_error_response(result)
-    result[:message] || "Failed to execute action."
-  end
-
-  def format_pr_message(pr)
-    created_at = pr[:created_at]
-    created_date = if created_at.respond_to?(:strftime)
-      created_at.strftime("%Y-%m-%d")
-    elsif created_at.is_a?(String)
-      created_at
-    else
-      "unknown date"
-    end
-    
-    # Format lines changed
-    total_changes = pr[:total_changes] || (pr[:additions].to_i + pr[:deletions].to_i)
-    lines_info = if total_changes > 0
-      "+#{pr[:additions] || 0}/-#{pr[:deletions] || 0} (#{total_changes} total)"
-    else
-      "No changes"
-    end
-    
-    pr_url = pr[:url] || "https://github.com/#{pr[:repository] || 'unknown/repo'}/pull/#{pr[:number]}"
-    pr_title = pr[:title] || "PR ##{pr[:number]}"
-    
-    # Use Slack rich text format: title as link
-    "<#{pr_url}|#{pr_title}>\n" \
-    "Created: #{created_date} • Lines changed: #{lines_info}"
-  end
 
   def build_github_oauth_invitation_message
     # Generate OAuth URL with user context

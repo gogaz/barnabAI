@@ -11,15 +11,11 @@ module AIProviders
     def initialize(api_key:, model: "gemini-pro")
       @api_key = api_key
       @model_name = model
-      @debug_mode = false
     end
 
     def chat_completion(messages, options = {})
       # Convert messages to Gemini format
       contents = format_messages_for_gemini(messages)
-      puts "=" * 80
-      puts "CHAT COMPLETION"
-      puts "=" * 80
 
       # Build request body
       generation_config = {
@@ -36,18 +32,6 @@ module AIProviders
         contents: contents,
         generationConfig: generation_config
       }
-
-      # Log complete prompt in debug mode
-      puts request_body.inspect
-
-      puts "=" * 80
-      puts "END CHAT COMPLETION"
-      puts "=" * 80
-
-      # If in debug mode, return mock response instead of making actual request
-      if @debug_mode
-        return mock_chat_response(messages)
-      end
 
       response = make_api_request("generateContent", request_body)
       text = extract_text_from_response(response)
@@ -88,21 +72,6 @@ module AIProviders
           responseMimeType: "application/json"
         }
       }
-
-      puts "=" * 80
-      puts "STRUCTURED OUTPUT"
-      puts "=" * 80
-      # Log complete prompt in debug mode
-      puts request_body.inspect
-
-      puts "=" * 80
-      puts "END STRUCTURED OUTPUT"
-      puts "=" * 80
-
-      # If in debug mode, return mock response instead of making actual request
-      if @debug_mode
-        return mock_structured_response(schema, messages)
-      end
 
       response = make_api_request("generateContent", request_body)
       text = extract_text_from_response(response)
@@ -259,60 +228,6 @@ module AIProviders
         intent: "general_chat",
         parameters: {},
         confidence: 0.5
-      }
-    end
-
-    def mock_chat_response(messages)
-      # Return a mock response for debugging
-      last_user_message = messages.reverse.find { |m| (m[:role] || m["role"]) == "user" }
-      user_text = last_user_message&.dig(:content) || last_user_message&.dig("content") || ""
-      
-      "[DEBUG MODE] Mock response to: #{user_text[0..50]}..."
-    end
-
-    def mock_structured_response(schema, messages = [])
-      # Return a mock structured response for debugging
-      function_name = schema[:function_name] || "detect_intent"
-      
-      # Extract the last user message to help determine intent
-      last_user_message = messages.reverse.find { |m| (m[:role] || m["role"]) == "user" }
-      user_text = (last_user_message&.dig(:content) || last_user_message&.dig("content") || "").downcase
-      
-      # Simple intent detection based on keywords
-      mock_intent = if function_name == "detect_intent"
-        if user_text.include?("details") || user_text.include?("summary") && (user_text.include?("pr") || user_text.include?("pull request"))
-          "pull_request_details_summary"
-        elsif user_text.include?("pr") || user_text.include?("pull request") || user_text.include?("summarize")
-          "SUMMARIZE_EXISTING_PRS"
-        elsif user_text.include?("?") || user_text.include?("what") || user_text.include?("how") || user_text.include?("help")
-          "general_chat"
-        else
-        "general_chat"
-        end
-      else
-        function_name
-      end
-      
-      # Build parameters based on intent
-      parameters = {}
-      
-      if mock_intent == "general_chat"
-        # Provide a mock response for general_chat
-        parameters[:response] = "[DEBUG MODE] Mock response: I understand you're asking about '#{user_text[0..50]}...'. " \
-                                "In production, I would provide a helpful answer here."
-      elsif mock_intent == "ask_clarification"
-        # Provide a mock clarification question
-        parameters[:clarification_question] = "[DEBUG MODE] Could you please clarify what you'd like me to help you with?"
-      elsif mock_intent == "pull_request_details_summary"
-        # Extract PR number from message if present, otherwise use a mock number
-        pr_match = user_text.match(/#?(\d+)/)
-        parameters[:pr_number] = pr_match ? pr_match[1].to_i : 123
-      end
-      
-      {
-        intent: mock_intent,
-        parameters: parameters,
-        confidence: 0.7
       }
     end
   end

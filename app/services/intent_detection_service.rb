@@ -118,11 +118,7 @@ class IntentDetectionService
   def detect_intent(user_message, context = {})
     messages = build_messages(user_message, context)
     result = @ai_provider.structured_output(messages, INTENT_SCHEMA)
-
-    normalized = normalize_result(result)
-    Rails.logger.info("🎯 Intent detected: #{normalized[:intent]}")
-    Rails.logger.info("📋 Parameters: #{normalized[:parameters].inspect}")
-    normalized
+    normalize_result(result)
   rescue StandardError => e
     Rails.logger.error("Intent detection failed: #{e.message}")
     Rails.logger.error(e.backtrace.join("\n"))
