@@ -8,74 +8,94 @@ module AIProviders
   class GeminiProvider < BaseProvider
     API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-    def initialize(api_key:, model: "gemini-pro")
+    def initialize(api_key:, model:)
       @api_key = api_key
       @model_name = model
     end
 
     def chat_completion(messages, options = {})
-      # Convert messages to Gemini format
-      contents = format_messages_for_gemini(messages)
+      # Convert messages to Gemini format, extracting system instruction
+      system_instruction, gemini_messages = format_messages_for_gemini(messages)
 
       # Build request body
-      generation_config = {
-        temperature: options[:temperature] || 0.7,
-        maxOutputTokens: options[:max_tokens] || 1000
-      }
-      
-      # Force JSON output if requested
-      if options[:response_format] == :json || options[:response_format] == "json"
-        generation_config[:responseMimeType] = "application/json"
-      end
-      
+      generation_config = { temperature: options[:temperature] || 0.7, }
+      generation_config[:maxOutputTokens] = options[:max_tokens] if options[:max_tokens]
+
+      response_format = options.delete(:response_format) || :json
+      generation_config[:responseMimeType] = Mime[response_format].to_s
+
       request_body = {
-        contents: contents,
+        contents: gemini_messages,
         generationConfig: generation_config
       }
 
-      response = make_api_request("generateContent", request_body)
-      text = extract_text_from_response(response)
-      
-      # If JSON was requested, strip markdown code blocks if present
-      if options[:response_format] == :json || options[:response_format] == "json"
-        text = strip_json_markdown(text)
+      # Add system instruction if present
+      if system_instruction.present?
+        request_body[:systemInstruction] = {
+          role: "system",
+          parts: [{ text: system_instruction }]
+        }
       end
-      
-      text
+
+      puts "=" * 80
+      puts "GEMINI REQUEST BODY"
+      puts request_body.to_json
+      puts "=" * 80
+      response = make_api_request("generateContent", request_body)
+      extract_text_from_response(response)
     rescue StandardError => e
       Rails.logger.error("Gemini API error: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
       raise
     end
 
-    def structured_output(messages, schema, options = {})
-      # Build system message for structured output
-      system_message = build_system_message_for_structured_output(schema)
+    # Structured output using Gemini function calling API
+    # @param structured_prompt [Hash] Hash with :messages and :functions (function declarations)
+    # @param options [Hash] Additional options
+    # @option options [Boolean] :allow_multiple Whether to allow multiple function calls (default: false)
+    # @option options [Float] :temperature Temperature for generation (default: 0.3)
+    # @return [Hash, Array<Hash>] Single hash with :name and :parameters, or array of hashes if allow_multiple is true
+    def structured_output(structured_prompt, options = {})
+      puts structured_prompt.inspect
+      allow_multiple = options[:allow_multiple] || false
 
-      # Format user messages
-      user_content = format_user_messages(messages)
+      # Convert messages to Gemini format, extracting system instruction
+      system_instruction, gemini_messages = format_messages_for_gemini(structured_prompt[:messages])
 
-      # Combine system message with user content
-      prompt = "#{system_message}\n\nUser message:\n#{user_content}\n\nRespond with JSON only:"
-
-      # Build request body
+      # Build request body with function calling
       request_body = {
-        contents: [
+        contents: gemini_messages,
+        tools: [
           {
-            parts: [
-              { text: prompt }
-            ]
+            functionDeclarations: structured_prompt[:functions]
           }
         ],
         generationConfig: {
-          temperature: options[:temperature] || 0.3,
-          responseMimeType: "application/json"
+          temperature: options[:temperature] || 0.7,
         }
       }
+      request_body[:generationConfig][:maxOutputTokens] = options[:max_tokens] if options[:max_tokens]
+
+      # Add system instruction if present
+      if system_instruction.present?
+        request_body[:systemInstruction] = {
+          parts: [{ text: system_instruction }]
+        }
+      end
+
+      if allow_multiple
+        request_body[:toolConfig] = {
+          functionCallingConfig: {
+            mode: "any"
+          }
+        }
+      end
 
       response = make_api_request("generateContent", request_body)
-      text = extract_text_from_response(response)
-      parse_structured_response(text, schema)
+      {
+        text: extract_text_from_response(response),
+        tools: parse_function_call_response(response)
+      }
     rescue StandardError => e
       Rails.logger.error("Gemini structured output error: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
@@ -112,123 +132,66 @@ module AIProviders
       JSON.parse(response.body)
     end
 
-    def format_messages_for_gemini(messages)
-      # Separate system message from conversation messages
-      system_message = nil
-      conversation_messages = []
-
-      messages.each do |msg|
-        role = msg[:role] || msg["role"]
-        content = msg[:content] || msg["content"]
-
-        if role == "system"
-          system_message = content
-        else
-          conversation_messages << msg
-        end
-      end
-
-      # Format conversation messages for Gemini
-      # Gemini uses "user" and "model" roles (not "assistant")
-      formatted = conversation_messages.map do |msg|
-        role = msg[:role] || msg["role"]
-        content = msg[:content] || msg["content"]
-        gemini_role = role == "assistant" ? "model" : "user"
-
-        {
-          role: gemini_role,
-          parts: [
-            { text: content }
-          ]
-        }
-      end
-
-      # If we have a system message, prepend it to the first user message
-      # Gemini doesn't have a separate system role, so we integrate it into the first message
-      if system_message && formatted.any?
-        first_message = formatted.first
-        if first_message[:role] == "user"
-          # Prepend system message to the first user message
-          first_message[:parts][0][:text] = "#{system_message}\n\n#{first_message[:parts][0][:text]}"
-        end
-      end
-
-      formatted
-    end
-
-    def format_user_messages(messages)
-      messages.map do |msg|
-        role = msg[:role] || msg["role"]
-        content = msg[:content] || msg["content"]
-        "#{role.capitalize}: #{content}"
-      end.join("\n")
-    end
-
     def extract_text_from_response(response)
+      response.dig("candidates", 0, "content", "parts", 0, "text") || ""
+    end
+
+    # Parse function call response from Gemini API
+    # @param response [Hash] The API response
+    # @return [Hash, Array<Hash>] Function call(s) with :name and :parameters
+    def parse_function_call_response(response)
       candidates = response.dig("candidates")
-      return "" unless candidates&.any?
+      return unless candidates&.any?
 
       content = candidates[0].dig("content")
-      return "" unless content
+      return unless content
 
       parts = content.dig("parts")
-      return "" unless parts&.any?
+      return unless parts&.any?
 
-      parts[0].dig("text") || ""
-    end
-
-    def build_system_message_for_structured_output(schema)
-      function_name = schema[:function_name] || "detect_intent"
-      description = schema[:description] || "Detect user intent from the conversation"
-      parameters = schema[:parameters] || {}
-
-      <<~PROMPT
-        You are an intent detection system. Analyze the user's message and return a JSON response with the following structure:
+      # Extract all function calls from parts
+      function_calls = parts.filter_map do |part|
+        function_call = part["functionCall"]
+        next unless function_call
 
         {
-          "intent": "#{function_name}",
-          "parameters": #{parameters.to_json}
+          name: function_call["name"],
+          parameters: function_call["args"]&.deep_symbolize_keys || {}
         }
+      end
 
-        #{description}
+      return if function_calls.empty?
 
-        Return only valid JSON, no additional text or explanation.
-      PROMPT
+      function_calls
     end
 
-    def strip_json_markdown(text)
-      return text unless text
-      
-      # Remove markdown code blocks (```json or ```)
-      json_text = text.strip
-      json_text = json_text.gsub(/^```json\s*/i, "").gsub(/^```\s*/, "").gsub(/\s*```$/, "").strip
-      json_text
-    end
+    # Convert messages from standard format to Gemini format
+    # Standard: { role: "user/assistant/system", content: "..." }
+    # Gemini: { role: "user/model", parts: [{ text: "..." }] }
+    # @return [Array<String, Array>] [system_instruction, gemini_messages]
+    def format_messages_for_gemini(messages)
+      system_instruction = []
+      gemini_messages = []
 
-    def parse_structured_response(text, schema)
-      return default_response unless text
+      messages.each do |msg|
+        case msg[:role]
+        when "system"
+          system_instruction << msg[:content]
+        when "function"
+          case msg[:action]
+          when "call"
+            gemini_messages << { role: "model", parts: msg[:parts] }
+          when "response"
+            gemini_messages << { role: "function", parts: msg[:parts] }
+          end
+        when "assistant"
+          gemini_messages << { role: "model", parts: [{ text: msg[:content] }] }
+        else
+          gemini_messages << { role: "user", parts: [{ text: msg[:content] }] }
+        end
+      end
 
-      # Extract JSON from response (might have markdown code blocks)
-      json_text = strip_json_markdown(text)
-
-      parsed = JSON.parse(json_text)
-      {
-        intent: parsed["intent"] || schema[:function_name] || "general_chat",
-        parameters: parsed["parameters"] || {},
-        confidence: 0.9
-      }
-    rescue JSON::ParserError => e
-      Rails.logger.error("Failed to parse Gemini structured response: #{e.message}")
-      Rails.logger.error("Response text: #{text}")
-      default_response
-    end
-
-    def default_response
-      {
-        intent: "general_chat",
-        parameters: {},
-        confidence: 0.5
-      }
+      [system_instruction.compact.join("\n\n").presence, gemini_messages]
     end
   end
 end

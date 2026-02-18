@@ -25,31 +25,6 @@
       margin-bottom: 20px;
       text-align: center;
     }
-    .user-info {
-      background: #f6f8fa;
-      border: 1px solid #d1d5da;
-      border-radius: 6px;
-      padding: 20px;
-      margin: 20px 0;
-      text-align: center;
-    }
-    .user-avatar {
-      width: 64px;
-      height: 64px;
-      border-radius: 50%;
-      margin: 0 auto 15px;
-      display: block;
-    }
-    .user-name {
-      font-weight: bold;
-      font-size: 18px;
-      color: #24292e;
-      margin-bottom: 5px;
-    }
-    .user-login {
-      color: #586069;
-      font-size: 14px;
-    }
     .instructions {
       margin-top: 30px;
       padding-top: 20px;
@@ -64,13 +39,6 @@
       color: #586069;
       line-height: 1.8;
     }
-    .next-steps {
-      background: #dbeafe;
-      border-left: 4px solid #3b82f6;
-      padding: 15px;
-      margin: 20px 0;
-      border-radius: 4px;
-    }
     .next-steps h3 {
       margin-top: 0;
       color: #1e40af;
@@ -81,46 +49,28 @@
       color: #1e3a8a;
       font-size: 14px;
     }
+    .bold {
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="success-icon">✅</div>
     <h1 style="text-align: center;">GitHub Account Connected!</h1>
-    
-    <% if @user_info.present? && @user_info["login"].present? %>
-      <div class="user-info">
-        <% if @user_info["avatar_url"].present? %>
-          <img src="<%= @user_info["avatar_url"] %>" alt="GitHub Avatar" class="user-avatar">
-        <% end %>
-        <div class="user-name"><%= @user_info["name"] || @user_info["login"] %></div>
-        <div class="user-login">@<%= @user_info["login"] %></div>
-        <% if @user_info["email"].present? %>
-          <div style="color: #586069; font-size: 14px; margin-top: 5px;"><%= @user_info["email"] %></div>
-        <% end %>
-      </div>
-    <% end %>
 
     <div class="instructions">
       <h2>What's Next?</h2>
       <ul>
         <li>Your GitHub account is now connected to BarnabAI</li>
-        <li>Webhooks will automatically be set up for your repositories</li>
-        <li>When a Pull Request is opened, BarnabAI will create a Slack thread</li>
-        <li>You can manage PRs directly from Slack using natural language commands</li>
+        <li>You can manage PRs directly from Slack using natural language</li>
         <li>BarnabAI can now comment, merge, and close PRs on your behalf</li>
+        <li class="bold">Make sure webhooks are properly set-up on your desired Github repositories!</li>
       </ul>
     </div>
 
-    <div class="next-steps">
-      <h3>💡 Pro Tip</h3>
-      <p>
-        Make sure you've also installed BarnabAI in your Slack workspace. 
-      </p>
-    </div>
-
     <p style="margin-top: 30px; color: #586069; font-size: 14px; text-align: center;">
-      You can close this window and return to your workflow.
+      You can now close this window.
     </p>
   </div>
 </body>

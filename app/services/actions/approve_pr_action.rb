@@ -1,22 +1,45 @@
 # frozen_string_literal: true
 
-class Actions::ApprovePrAction < Actions::BaseAction
-  def execute(parameters)
-    pr_number = parameters[:pr_number] || @pull_request&.number
-    body = parameters[:message] || "Approved via Slack bot"
-    raise ArgumentError, "PR number is required" unless pr_number
-    raise ArgumentError, "Pull request is required" unless @pull_request
+class Actions::ApprovePRAction < Actions::BaseAction
+  include Actions::HasFunctionMetadata
 
-    result = @github_service.approve_pull_request(
-      @pull_request.repository,
+  function_code "github_approve_pr"
+  function_description "Approve a pull request review. Use this when the user wants to approve a PR, either by explicitly saying 'approve' or by expressing agreement/support for the changes in the PR."
+  function_parameters({
+                        type: "object",
+                        properties: {
+                          pr_number: {
+                            type: "integer",
+                            description: "The PR number to interact with. Can often be extracted from a URL or the user messages."
+                          },
+                          repository: {
+                            type: "string",
+                            description: "The repository in the format 'owner/repo'"
+                          },
+                          message: {
+                            type: "string",
+                            description: "Optional reason for approving the PR."
+                          },
+                        },
+                        required: ["pr_number", "repository"]
+                      })
+
+  def execute(parameters)
+    pr_number = parameters[:pr_number]
+    body = parameters[:message]
+    raise ArgumentError, "PR number is required" unless pr_number
+
+    repository = parameters[:repository]
+    raise ArgumentError, "Repository is required" unless repository
+
+    client = Octokit::Client.new(access_token: @user.primary_github_token.token)
+    response = client.create_pull_request_review(
+      repository,
       pr_number,
+      event: "APPROVE",
       body: body
     )
 
-    {
-      success: true,
-      message: "Approved PR ##{pr_number}",
-      data: result
-    }
+    "Approved <#{response.html_url}|PR ##{pr_number}> successfully."
   end
 end

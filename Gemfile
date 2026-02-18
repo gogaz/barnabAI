@@ -9,9 +9,6 @@ gem "rails", "~> 8.1"
 # Use the Puma web server
 gem "puma", ">= 5.0"
 
-# Use Kredis to get higher-level data types in Redis
-gem "kredis"
-
 # Background job processing
 gem "solid_queue"
 

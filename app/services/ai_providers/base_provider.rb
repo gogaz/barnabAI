@@ -10,12 +10,12 @@ module AIProviders
       raise NotImplementedError, "Subclasses must implement chat_completion"
     end
 
-    # Structured output for intent detection
-    # @param messages [Array<Hash>] Array of message hashes with :role and :content
-    # @param schema [Hash] JSON schema or function definition for structured output
+    # Structured output using function calling
+    # @param structured_prompt [Hash] Hash with :messages (provider-specific format) and :functions (function declarations)
     # @param options [Hash] Additional options
-    # @return [Hash] Structured response with intent and parameters
-    def structured_output(messages, schema, options = {})
+    # @option options [Boolean] :allow_multiple Whether to allow multiple function calls (default: false)
+    # @return [Hash, Array<Hash>] Function call(s) with :name and :parameters
+    def structured_output(structured_prompt, options = {})
       raise NotImplementedError, "Subclasses must implement structured_output"
     end
   end

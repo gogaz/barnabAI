@@ -10,9 +10,8 @@
 #   inflect.uncountable %w( fish sheep )
 # end
 
-# These inflection rules are supported but not enabled by default:
 ActiveSupport::Inflector.inflections(:en) do |inflect|
-  # Treat "AI" as an acronym so it stays uppercase in constant names
-  # This allows ai_provider_factory.rb to define AIProviderFactory
   inflect.acronym "AI"
+  inflect.acronym "MCP"
+  inflect.acronym "PR"
 end

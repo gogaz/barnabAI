@@ -1,6 +1,26 @@
 # frozen_string_literal: true
 
 class Actions::ListPrsByTeamsAction < Actions::BaseAction
+  include Actions::HasFunctionMetadata
+
+  function_code "computed_prs_by_teams"
+  function_description ""
+  function_parameters({
+    type: "object",
+    properties: {
+      teams: {
+        type: "array",
+        items: { type: "string" },
+        description: "Extract mentioned team names from the user's message when relevant (e.g., ['organization/core-team', 'rails/founders']). Be flexible with typos and partial matches."
+      },
+      days: {
+        type: "integer",
+        description: "When the user asks to search, extract the number of days. Examples: 'last 3 days' -> 3, 'past week' -> 7, 'last month' -> 30. Only include if user explicitly mentions a duration."
+      }
+    },
+    required: ["teams"]
+  })
+
   def execute(parameters)
     teams = parameters[:teams] || parameters["teams"]
     raise ArgumentError, "Teams are required" unless teams&.any?
@@ -38,75 +58,40 @@ class Actions::ListPrsByTeamsAction < Actions::BaseAction
       .limit(50)
 
     if matching_prs.empty?
-      {
-        success: true,
-        message: "No PRs found impacting teams: #{teams_array.join(', ')}",
-        data: { prs: [] }
-      }
-    else
-      # Fetch file diffs for each PR
-      pr_list_with_diffs = matching_prs.map do |pr|
-        begin
-          files = @github_service.get_files(pr.repository, pr.number)
-          # Extract patch/diff information from files
-          file_changes = files.map do |file|
-            {
-              filename: file.filename,
-              status: file.status,
-              additions: file.additions,
-              deletions: file.deletions,
-              changes: file.changes,
-              patch: file.patch # This contains the actual diff
-            }
-          end
+      return ["No PRs found impacting teams: #{teams_array.join(', ')}"]
+    end
 
-          {
-            number: pr.number,
-            title: pr.title,
-            state: pr.state,
-            repository: pr.repository.full_name,
-            url: "https://github.com/#{pr.repository.full_name}/pull/#{pr.number}",
-            impacted_teams: pr.impacted_teams,
-            created_at: pr.github_created_at&.strftime("%Y-%m-%d"),
-            files: file_changes
-          }
-        rescue StandardError => e
-          Rails.logger.warn("Failed to fetch files for PR ##{pr.number}: #{e.message}")
-          # Include PR without file diffs if fetch fails
-          {
-            number: pr.number,
-            title: pr.title,
-            state: pr.state,
-            repository: pr.repository.full_name,
-            url: "https://github.com/#{pr.repository.full_name}/pull/#{pr.number}",
-            impacted_teams: pr.impacted_teams,
-            created_at: pr.github_created_at&.strftime("%Y-%m-%d"),
-            files: []
-          }
-        end
+    # Fetch file diffs for each PR
+    pr_list_with_diffs = matching_prs.map do |pr|
+      files = github_client.get_files(pr.repository, pr.number)
+      file_changes = files.map do |file|
+        {
+          filename: file.filename,
+          status: file.status,
+          additions: file.additions,
+          deletions: file.deletions,
+          changes: file.changes,
+          patch: file.patch
+        }
       end
 
-      # Generate AI summary with grouping and diff analysis
-      blocks = build_prs_summary_blocks(pr_list_with_diffs, teams_array, days)
-
       {
-        success: true,
-        message: "Found #{matching_prs.count} PR(s) impacting teams: #{teams_array.join(', ')}",
-        data: { prs: pr_list_with_diffs, teams: teams_array, blocks: blocks }
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        repository: pr.repository.full_name,
+        url: "https://github.com/#{pr.repository.full_name}/pull/#{pr.number}",
+        impacted_teams: pr.impacted_teams,
+        created_at: pr.github_created_at&.strftime("%Y-%m-%d"),
+        files: file_changes
       }
     end
-  rescue ArgumentError => e
-    {
-      success: false,
-      message: e.message
-    }
-  rescue StandardError => e
-    Rails.logger.error("Failed to list PRs by teams: #{e.message}")
-    Rails.logger.error(e.backtrace.join("\n"))
-    {
-      success: false,
-      message: "Failed to list PRs: #{e.message}"
-    }
+
+    # Generate AI summary with grouping and diff analysis
+    blocks = build_prs_summary_blocks(pr_list_with_diffs, teams_array, days)
+
+    # Return blocks as JSON string (single message with blocks)
+    [blocks.to_json]
   end
 
   private
@@ -189,42 +174,10 @@ class Actions::ListPrsByTeamsAction < Actions::BaseAction
       { role: "user", content: user_message }
     ]
 
-    response = @ai_provider.chat_completion(
+    @ai_provider.chat_completion(
       messages,
       max_tokens: 4000, # Increased for diff analysis and multiple PRs
       response_format: :json
     )
-
-    # Parse the JSON response (should be an array of Slack blocks)
-    blocks = JSON.parse(response)
-    blocks.is_a?(Array) ? blocks : [blocks]
-  rescue JSON::ParserError => e
-    Rails.logger.error("Failed to parse AI response as JSON: #{e.message}")
-    Rails.logger.error("Response was: #{response}")
-    # Fallback to simple text format
-    pr_text = pr_list.map { |pr| "• <#{pr[:url]}|##{pr[:number]}: #{pr[:title]}> (#{pr[:state]})" }.join("\n")
-    [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "Found #{pr_list.count} PR(s) impacting teams: #{teams_array.join(', ')}\n\n#{pr_text}"
-        }
-      }
-    ]
-  rescue StandardError => e
-    Rails.logger.error("Failed to build PRs summary blocks: #{e.message}")
-    Rails.logger.error(e.backtrace.join("\n"))
-    # Fallback to simple text format
-    pr_text = pr_list.map { |pr| "• <#{pr[:url]}|##{pr[:number]}: #{pr[:title]}> (#{pr[:state]})" }.join("\n")
-    [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "Found #{pr_list.count} PR(s) impacting teams: #{teams_array.join(', ')}\n\n#{pr_text}"
-        }
-      }
-    ]
   end
 end

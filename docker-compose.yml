@@ -4,11 +4,11 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
-    container_name: jessicai_postgres
+    container_name: app_postgres
     environment:
       POSTGRES_USER: ${DATABASE_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      POSTGRES_DB: ${DATABASE_NAME:-jessicai_production}
+      POSTGRES_DB: ${DATABASE_NAME:-app_production}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -19,25 +19,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - jessicai_network
-    restart: unless-stopped
-
-  # Redis (for Kredis if needed)
-  redis:
-    image: redis:7-alpine
-    container_name: jessicai_redis
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    networks:
-      - jessicai_network
+      - app_network
     restart: unless-stopped
 
   # Rails Web Server
@@ -45,16 +27,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: jessicai_web
+    container_name: app_web
     command: ./bin/thrust ./bin/rails server -b 0.0.0.0
     environment:
       RAILS_ENV: ${RAILS_ENV:-production}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: 5432
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production}
+      CACHE_DATABASE_URL: ${CACHE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_cache}
+      QUEUE_DATABASE_URL: ${QUEUE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_queue}
+      CABLE_DATABASE_URL: ${CABLE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_cable}
       # Slack Configuration
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
       SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
@@ -84,10 +64,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
-      - jessicai_network
+      - app_network
     restart: unless-stopped
 
   # Background Jobs Worker (Solid Queue)
@@ -95,16 +73,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: jessicai_jobs
+    container_name: app_jobs
     command: ./bin/rails solid_queue:start
     environment:
       RAILS_ENV: ${RAILS_ENV:-production}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: 5432
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production}
+      CACHE_DATABASE_URL: ${CACHE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_cache}
+      QUEUE_DATABASE_URL: ${QUEUE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_queue}
+      CABLE_DATABASE_URL: ${CABLE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production_cable}
       JOB_CONCURRENCY: ${JOB_CONCURRENCY:-2}
       # Slack Configuration
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
@@ -129,12 +105,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       web:
         condition: service_started
     networks:
-      - jessicai_network
+      - app_network
     restart: unless-stopped
 
   # Slack Socket Mode Service
@@ -142,16 +116,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: jessicai_slack_socket_mode
-    command: ./bin/rails runner "SlackService.start_socket_mode rescue puts('Socket Mode error, keeping container alive for debugging'); loop { sleep 3600 }"
+    container_name: app_slack_socket_mode
+    command: ./bin/rails slack:connect"
     environment:
       RAILS_ENV: ${RAILS_ENV:-production}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: 5432
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_NAME: ${DATABASE_NAME:-jessicai_production}
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app_production}
+      CACHE_DATABASE_URL: ${CACHE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/production_cache}
+      QUEUE_DATABASE_URL: ${QUEUE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/production_queue}
+      CABLE_DATABASE_URL: ${CABLE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/production_cable}
       # Slack Configuration
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID}
       SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET}
@@ -175,18 +147,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       web:
         condition: service_started
     networks:
-      - jessicai_network
+      - app_network
     restart: unless-stopped
 
 volumes:
   postgres_data:
-    driver: local
-  redis_data:
     driver: local
   storage_data:
     driver: local
@@ -194,5 +162,5 @@ volumes:
     driver: local
 
 networks:
-  jessicai_network:
+  app_network:
     driver: bridge

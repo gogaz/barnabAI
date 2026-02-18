@@ -3,39 +3,14 @@
 class ProcessSlackMessageJob < ApplicationJob
   queue_as :default
 
-  def perform(installation_id:, channel_id:, thread_ts:, user_id:, text:, message_ts:)
-    installation = SlackInstallation.find_by(id: installation_id)
-    unless installation
-      Rails.logger.error("❌ Installation not found: #{installation_id}")
-      return
-    end
+  def perform(channel_id:, thread_ts:, user_id:, text:, message_ts:)
+    user = User.find_or_create_by!(slack_user_id: user_id)
 
-    # Find or create user
-    user = User.find_or_create_by!(
-      slack_installation: installation,
-      slack_user_id: user_id
-    )
+    # Loading indicator
+    Slack::Client.add_reaction(name: "eyes", channel: channel_id, timestamp: message_ts)
 
-    # Find associated PR via SlackThread
-    slack_thread = SlackThread.find_by(
-      slack_installation: installation,
-      slack_channel_id: channel_id,
-      slack_thread_ts: thread_ts
-    )
-
-    pull_request = slack_thread&.pull_request
-
-    # Add loading indicator (reaction)
-    SlackService.add_reaction(
-      installation,
-      channel: channel_id,
-      timestamp: message_ts,
-      name: "eyes"
-    )
-
-    # Process the message
-    chatbot = ChatbotService.new(installation, user, pull_request: pull_request)
-    chatbot.process_message(text, channel_id: channel_id, thread_ts: thread_ts)
+    chatbot = ChatbotService.new(user)
+    chatbot.process_message(text, channel_id: channel_id, thread_ts: thread_ts, message_ts: message_ts)
   rescue StandardError => e
     error_msg = "❌ Failed to process Slack message: #{e.message}"
     backtrace = e.backtrace.join("\n")
@@ -45,17 +20,25 @@ class ProcessSlackMessageJob < ApplicationJob
     Rails.logger.error(backtrace)
     
     # Also output to STDERR for immediate visibility in console
-    STDERR.puts "\n" + "=" * 80
     STDERR.puts error_msg
     STDERR.puts backtrace
-    STDERR.puts "=" * 80 + "\n"
+
+    # Send error message to user
+    error_message = "Sorry, I encountered an error processing your request: #{e.message}"
+    error_builder = Slack::MessageBuilder.new(text: error_message)
     
-    raise
+    Slack::Client.send_message(
+      channel: channel_id,
+      thread_ts: thread_ts,
+      **error_builder.to_h
+    )
+
+    # Re-raise to mark job as failed (no retry by default in ActiveJob)
+    raise e
   ensure
     # Remove loading indicator (reaction) in all cases
-    if installation && message_ts
-      SlackService.remove_reaction(
-        installation,
+    if message_ts
+      Slack::Client.remove_reaction(
         channel: channel_id,
         timestamp: message_ts,
         name: "eyes"

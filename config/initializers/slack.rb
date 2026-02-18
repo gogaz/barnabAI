@@ -4,7 +4,7 @@
 # Required environment variables:
 # - SLACK_CLIENT_ID: Your Slack app's client ID
 # - SLACK_CLIENT_SECRET: Your Slack app's client secret
-# - SLACK_APP_TOKEN: App-level token for Socket Mode (same for all workspaces)
+# - SLACK_APP_TOKEN: App-level token for Socket Mode
 
 if Rails.env.production?
   unless ENV["SLACK_CLIENT_ID"]

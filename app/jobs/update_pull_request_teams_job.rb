@@ -18,7 +18,7 @@ class UpdatePullRequestTeamsJob < ApplicationJob
       user = repository.slack_installation.users.first
       return unless user
 
-      github_service = GithubService.new(user)
+      github_service = Github::Client.new(user)
       github_pr = github_service.get_pull_request(repository, pr_number)
       return unless github_pr
 
@@ -43,19 +43,18 @@ class UpdatePullRequestTeamsJob < ApplicationJob
     user = repository.slack_installation.users.first
     return unless user
 
-    github_service = GithubService.new(user)
+    github_service = Github::Client.new(user)
 
     # Fetch files changed in the PR
     files = github_service.get_files(repository, pr_number)
     return unless files&.any?
 
     # Determine impacted teams using CodeownersMatcher
-    matcher = CodeownersMatcher.new(github_service, repository)
+    matcher = CodeOwnersMatcher.new(github_service, repository)
     impacted_teams = matcher.determine_impacted_teams(files)
 
     # Update the PR with impacted teams
     pull_request.impacted_teams = impacted_teams
-    puts pull_request.inspect
     pull_request.save!
   rescue StandardError => e
     Rails.logger.error("Failed to update PR teams for #{repository_id}/#{pr_number}: #{e.message}")

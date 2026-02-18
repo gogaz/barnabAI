@@ -2,14 +2,16 @@
 
 one:
   pull_request: one
-  slack_channel_id: MyString
-  slack_thread_ts: MyString
-  slack_user_id: MyString
-  root_message_ts: MyString
+  slack_installation: one
+  slack_channel_id: C123456
+  slack_thread_ts: "1234567890.123456"
+  slack_user_id: U123456
+  root_message_ts: "1234567890.123456"
 
 two:
   pull_request: two
-  slack_channel_id: MyString
-  slack_thread_ts: MyString
-  slack_user_id: MyString
-  root_message_ts: MyString
+  slack_installation: two
+  slack_channel_id: C789012
+  slack_thread_ts: "1234567890.789012"
+  slack_user_id: U789012
+  root_message_ts: "1234567890.789012"

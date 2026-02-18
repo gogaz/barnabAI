@@ -5,7 +5,6 @@ class GithubOauthController < ApplicationController
 
   # Landing page for GitHub OAuth installation
   def index
-    # Render the installation page
   end
 
   # Redirect user to GitHub OAuth authorization page
@@ -17,15 +16,14 @@ class GithubOauthController < ApplicationController
     
     # Store state in session for verification
     session[:github_oauth_state] = state
-    # Store slack_user_id and slack_installation_id for per-user authentication
+    # Store slack_user_id for per-user authentication
     session[:github_oauth_slack_user_id] = params[:slack_user_id] if params[:slack_user_id]
-    session[:github_oauth_slack_installation_id] = params[:slack_installation_id] if params[:slack_installation_id]
 
     oauth_params = {
-    "client_id" => client_id,
-    "scope" => scope,
-    "redirect_uri" => redirect_uri,
-    "state" => state
+      "client_id" => client_id,
+      "scope" => scope,
+      "redirect_uri" => redirect_uri,
+      "state" => state
     }
     
     # If force=true, add prompt=consent to force GitHub to re-ask for permissions
@@ -34,8 +32,7 @@ class GithubOauthController < ApplicationController
       oauth_params["prompt"] = "consent"
     end
 
-    oauth_url = "https://github.com/login/oauth/authorize?" + 
-                oauth_params.map { |k, v| "#{k}=#{CGI.escape(v.to_s)}" }.join("&")
+    oauth_url = "https://github.com/login/oauth/authorize?#{URI.encode_www_form(oauth_params)}"
 
     redirect_to oauth_url, allow_other_host: true
   end
@@ -59,28 +56,20 @@ class GithubOauthController < ApplicationController
     result = exchange_code_for_token(code)
 
     if result[:success]
-      # Get user info from GitHub
-      user_info = get_user_info(result[:access_token])
-      
-      # Save or update GitHub token for the user
       slack_user_id = session[:github_oauth_slack_user_id]
-      slack_installation_id = session[:github_oauth_slack_installation_id]
-      
-      if slack_user_id && slack_installation_id
-        save_user_github_token(slack_user_id, slack_installation_id, result[:access_token], user_info, result[:scope])
-      else
-        # Store in session for display if no user context
-        session[:github_user_info] = user_info
-        session[:github_access_token] = result[:access_token]
+
+      if slack_user_id
+        # Save minimal token info - job will fetch full user details
+        github_token = save_user_github_token(slack_user_id, result[:access_token], result[:scope])
+
+        SuccessfulGithubOauthJob.perform_later(github_token_id: github_token.id)
       end
       
       # Clear state from session
       session.delete(:github_oauth_state)
       session.delete(:github_oauth_slack_user_id)
-      session.delete(:github_oauth_slack_installation_id)
 
-      redirect_to github_oauth_success_path, 
-                  notice: "Successfully connected GitHub account!"
+      redirect_to github_oauth_success_path
     else
       redirect_to root_path, alert: "Failed to connect: #{result[:error]}"
     end
@@ -88,11 +77,6 @@ class GithubOauthController < ApplicationController
 
   # Success page after installation
   def success
-    @user_info = session[:github_user_info] || {}
-    @access_token = session[:github_access_token]
-    # Clear session data after displaying
-    session.delete(:github_user_info)
-    session.delete(:github_access_token)
   end
 
   private
@@ -138,51 +122,24 @@ class GithubOauthController < ApplicationController
     }
   end
 
-  def get_user_info(access_token)
-    uri = URI("https://api.github.com/user")
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
+  def save_user_github_token(slack_user_id, access_token, scope = nil)
+    ApplicationRecord.transaction do
+      user = User.find_or_create_by!(slack_user_id: slack_user_id)
 
-    request = Net::HTTP::Get.new(uri)
-    request["Authorization"] = "token #{access_token}"
-    request["Accept"] = "application/vnd.github.v3+json"
+      github_token = GithubToken.find_or_initialize_by(user: user)
 
-    response = http.request(request)
-    JSON.parse(response.body)
-  rescue StandardError => e
-    Rails.logger.error("Failed to get user info: #{e.message}")
-    {}
-  end
+      # Use the actual scope returned by GitHub, or fallback to default
+      actual_scope = scope || "repo,read:user,read:org"
 
-  def save_user_github_token(slack_user_id, slack_installation_id, access_token, user_info, scope = nil)
-    # Find or create the user
-    slack_installation = SlackInstallation.find_by(id: slack_installation_id)
-    return unless slack_installation
+      github_token.assign_attributes(
+        token: access_token,
+        scope: actual_scope,
+        connected_at: Time.current
+      )
 
-    user = User.find_or_create_by!(
-      slack_installation: slack_installation,
-      slack_user_id: slack_user_id
-    )
+      github_token.save!
 
-    # Find or create GitHub token for this user
-    github_token = GithubToken.find_or_initialize_by(
-      user: user,
-      github_user_id: user_info["id"].to_s
-    )
-
-    # Use the actual scope returned by GitHub, or fallback to default
-    actual_scope = scope || "repo,read:user,read:org"
-    Rails.logger.info("Saving GitHub token with scopes: #{actual_scope}")
-
-    github_token.assign_attributes(
-      token: access_token,
-      github_username: user_info["login"],
-      github_email: user_info["email"],
-      scope: actual_scope,
-      connected_at: Time.current
-    )
-
-    github_token.save!
-    github_token
+      github_token
+    end
   end
 end

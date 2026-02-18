@@ -25,18 +25,18 @@ namespace :prs do
     errors = []
 
     # Iterate through all repositories
-    Repository.includes(:slack_installation).find_each do |repository|
+    Repository.find_each do |repository|
       puts "\n📦 Processing repository: #{repository.full_name}"
 
-      # Get a user from the slack installation for GitHub API access
-      user = repository.slack_installation.users.first
+      # Get a user for GitHub API access
+      user = User.first
       unless user
-        puts "  ⚠️  No users found for this installation, skipping"
+        puts "  ⚠️  No users found, skipping"
         errors << { repository: repository.full_name, error: "No users found" }
         next
       end
 
-      github_service = GithubService.new(user)
+      github_service = Github::Client.new(user)
 
       begin
         # Fetch PRs updated since the given timestamp
@@ -110,18 +110,18 @@ namespace :prs do
     errors = []
 
     # Iterate through all repositories
-    Repository.includes(:slack_installation).find_each do |repository|
+    Repository.find_each do |repository|
       puts "\n📦 Processing repository: #{repository.full_name}"
 
-      # Get a user from the slack installation for GitHub API access
-      user = repository.slack_installation.users.first
+      # Get a user for GitHub API access
+      user = User.first
       unless user
-        puts "  ⚠️  No users found for this installation, skipping"
+        puts "  ⚠️  No users found, skipping"
         errors << { repository: repository.full_name, error: "No users found" }
         next
       end
 
-      github_service = GithubService.new(user)
+      github_service = Github::Client.new(user)
 
       begin
         # Fetch all open PRs

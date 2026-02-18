@@ -2,82 +2,48 @@
 
 class Actions::StartPullRequestWorkflowAction < Actions::BaseAction
   include RepositoryResolverConcern
+  include Actions::HasFunctionMetadata
+
+  function_code "github_start_pull_request_workflow"
+  function_description "Re-run a failed workflow for a pull request"
+  function_parameters({
+    type: "object",
+    properties: {
+      pr_number: {
+        type: "integer",
+        description: "The PR number from the list of messages. Can often be extracted from a URL or if the user mentions a PR number"
+      },
+      repository: {
+        type: "string",
+        description: "The Github repository full name including owner (ideal format: 'owner/repo-name'). Can often be extracted from a URL or if the user mentions a repository name."
+      }
+    },
+    required: ["pr_number", "repository"]
+  })
 
   def execute(parameters)
-    pr_number = parameters[:pr_number] || parameters["pr_number"] || @pull_request&.number
-    
-    # Convert to integer if it's a string representation of a number
-    pr_number = pr_number.to_i if pr_number && pr_number.to_s.match?(/^\d+$/)
-    
-    unless pr_number && pr_number > 0
-      raise ArgumentError, "PR number is required"
-    end
+    number = parameters[:pr_number]
 
-    # Get repository - either from @pull_request or find/create from parameters/context
-    repository = if @pull_request
-      @pull_request.repository
-    elsif parameters[:repository]
-      repo_name = parameters[:repository]
-      # Disambiguate repository name if needed (handles both "owner/repo" and "repo-name" formats)
-      disambiguated_repo = disambiguate_repository_for_user(repo_name)
-      raise ArgumentError, "Repository '#{repo_name}' not found in your accessible repositories." unless disambiguated_repo
-      find_or_create_repository(disambiguated_repo)
-    else
-      raise ArgumentError, "Repository information is required. Please specify the repository (e.g., 'owner/repo-name') or use this command in a PR thread."
-    end
+    raise ArgumentError, "PR number is required" if number.blank?
 
-    # Get PR data to find the head branch
-    pr_data = @github_service.get_pull_request(repository, pr_number)
-    raise ArgumentError, "PR ##{pr_number} not found in #{repository.full_name}" unless pr_data
+    repository = parameters[:repository]
+    raise ArgumentError, "Please specify the repository (e.g., 'owner/repo-name')." if respository.blank?
 
-    head_branch = pr_data.head.ref
+    pr_data = github_client.get_pull_request(repository, number)
+    raise ArgumentError, "PR ##{number} not found in #{repository}" unless pr_data
 
-    # Try to find the latest failed workflow run for this branch
-    workflow_runs = @github_service.get_workflow_runs(
+    workflow_runs = github_client.get_workflow_runs(
       repository,
-      branch: head_branch,
-      per_page: 10
+      branch: pr_data.head.ref,
+      per_page: 50
     )
-
-    # Find the most recent failed run
     failed_run = workflow_runs.find { |run| run[:conclusion] == "failure" }
 
     if failed_run
-      # Re-run failed jobs from the failed run
-      @github_service.rerun_failed_workflow(repository, failed_run[:id])
-      {
-        success: true,
-        message: "Re-running failed jobs from workflow run ##{failed_run[:id]} for PR ##{pr_number}",
-        data: { run_id: failed_run[:id], workflow_name: failed_run[:name] }
-      }
+      github_client.rerun_failed_workflow(repository, failed_run[:id])
+      Slack::MessageBuilder.new(text: "Re-running failed jobs from workflow run ##{failed_run[:id]} for PR ##{number}")
     else
-      # No failed run found, trigger the workflow again on the branch
-      # Try to find the workflow file (default to common CI workflow)
-      workflow_file = parameters[:workflow_file] || ".github/workflows/ci.yml"
-      
-      @github_service.trigger_workflow(
-        repository,
-        workflow_file,
-        ref: head_branch
-      )
-      
-      {
-        success: true,
-        message: "Triggered workflow for PR ##{pr_number} on branch #{head_branch}",
-        data: { branch: head_branch, workflow_file: workflow_file }
-      }
+      Slack::MessageBuilder.new(text: "Test workflow for PR ##{number} is not currently failing. No workflow run was re-triggered.")
     end
-  rescue ArgumentError => e
-    {
-      success: false,
-      message: e.message
-    }
-  rescue StandardError => e
-    Rails.logger.error("Failed to start pull request workflow: #{e.message}")
-    Rails.logger.error(e.backtrace.join("\n"))
-    {
-      success: false,
-      message: "Failed to start workflow: #{e.message}"
-    }
   end
 end

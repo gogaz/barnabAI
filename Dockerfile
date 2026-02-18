@@ -2,8 +2,8 @@
 # check=error=true
 
 # This Dockerfile is designed for production, not development. Use with Kamal or build'n'run by hand:
-# docker build -t jessic_ai .
-# docker run -d -p 80:80 -e RAILS_MASTER_KEY=<value from config/master.key> --name jessic_ai jessic_ai
+# docker build -t barnab_ai .
+# docker run -d -p 80:80 -e RAILS_MASTER_KEY=<value from config/master.key> --name barnab_ai barnab_ai
 
 # For a containerized dev environment, see Dev Containers: https://guides.rubyonrails.org/getting_started_with_devcontainer.html
 

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class AIProviderFactory
-  def self.create
+  def self.create(_user)
     provider_name = ENV.fetch("AI_PROVIDER", "gemini").downcase
 
     case provider_name

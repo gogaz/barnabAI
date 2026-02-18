@@ -1,261 +1,129 @@
 # frozen_string_literal: true
 
 class ContextBuilderService
-  def initialize(slack_installation, user, pull_request: nil, channel_id: nil, thread_ts: nil)
-    @slack_installation = slack_installation
+  # General guidelines that are always included in prompts
+  GENERAL_GUIDELINES = [
+    "You are a developers assistant that helps developers manage their work on Github.",
+    "You have the skills of a senior developer with expertise in Github, pull requests, code reviews, and development workflows. Your goal is to assist developers in managing their pull requests, providing summaries, extracting information, and helping them stay organized.",
+    "You are talking to senior developers about THEIR work, always assume they already have a minimal context on the topic, even if they say they don't, they do have at least minimal knowledge about the codebase in general, and good understanding of the languages and the frameworks.",
+    "However they need reminders on what we're talking about : they have a lot to think about.",
+    "Be very concise, friendly yet professional. Use 2nd person, nothing too formal. Don't abuse of meaningless emojis, but feel free to use them when appropriate to make the conversation more readable.",
+    "Be direct: only greet the user if they greets you first. Your name is BarnabAI and your profile picture is a penguin in a tuxedo with Matrix glasses.",
+    "Always respond in the user's language (match the language of their message).",
+    "Always check for context in the messages to understand the user's intent and the context of the conversation.",
+    "Format your messages using Slack mrkdwn syntax: use <URL|text> for hyperlinks, *bold* for bold, _italic_ for italics, ~strikethrough~ for strikethrough, and > for blockquotes. Use single backticks for inline code and triple backticks without language name for code blocks. For lists, use a hyphen - followed by a space.",
+    "Always refer to users with their Slack User ID using the <@UABC123> format to ensure they get notified, instead of using their name.",
+    "NEVER use the standard Markdown [text](URL) format. NEVER include the language code after the 3 backticks in code snippets. Escape the characters <, >, and & by replacing them with &lt;, &gt;, and &amp; respectively.",
+    "Always prefer mrkdwn over plain text when you want to format your messages. If the message requires formatting (like links, bold, lists, etc.), use mrkdwn syntax. Only use plain text when the message is very simple and doesn't require any formatting.",
+  ].freeze
+
+  def initialize(user, channel_id: nil, thread_ts: nil, message_ts: nil)
     @user = user
-    @pull_request = pull_request
     @channel_id = channel_id
     @thread_ts = thread_ts
+    @message_ts = message_ts
+    @conversation = []
   end
 
-  def build
+  attr_reader :conversation, :user
+
+  def add_user_message(text, timestamp: nil)
+    time = timestamp || Time.now
+    add_message(role: "user", content: "#{time.utc.iso8601}:\n#{text}")
+  end
+
+  def add_assistant_message(text, timestamp: nil)
+    time = timestamp || Time.now
+    add_message(role: "assistant", content: "#{time.utc.iso8601}:\n#{text}")
+  end
+
+  def add_function_call(tool_name, arguments, response)
+    add_function_call_message(tool_name, arguments)
+    add_function_response_message(tool_name, response)
+  end
+
+  # Build prompt with system messages and conversation
+  # @param additional_context [Array] Additional context strings to include in the prompt
+  # @return [Array] Array of message hashes ready for AI provider
+  def build_prompt(additional_context: [])
+    system_messages(additional_context) + conversation
+  end
+
+  # Build structured prompt for Gemini function calling API
+  # @param functions [Class, Array<Class>] Array of action classes that include HasFunctionMetadata
+  # @param additional_context [Array] Additional context strings to include in the prompt
+  # @return [Hash] Hash with :messages (Gemini contents format) and :functions (function declarations)
+  def build_structured_prompt(functions: [], additional_context: [])
+    all_messages = system_messages(additional_context) + conversation
+
+    function_declarations = Array.wrap(functions).map do |fn_class|
+      fn_class.to_function_declaration
+    end
+
     {
-      workspace: build_workspace_context,
-      user: build_user_context,
-      pull_request: build_pr_context,
-      conversation: build_conversation_context,
-      thread_messages: build_thread_messages_context,
-      user_mappings: build_user_mappings_context,
-      available_teams: build_available_teams_context
+      messages: all_messages,
+      functions: function_declarations
     }
   end
 
   private
 
-  def build_workspace_context
-    {
-      team_name: @slack_installation.team_name,
-      team_id: @slack_installation.team_id
-    }
+  def system_messages(additional_context)
+    all_context = base_context + additional_context
+    system_messages = [
+      { role: "system", content: GENERAL_GUIDELINES.join("\n") },
+    ]
+    system_messages << { role: "system", content: all_context.join("\n") } if all_context.any?
+    system_messages
   end
 
-  def build_user_context
-    {
-      slack_user_id: @user.slack_user_id,
-      slack_username: @user.slack_username,
-      slack_display_name: @user.slack_display_name,
-      has_github_token: @user.primary_github_token.present?,
-      github_username: @user.primary_github_token&.github_username
-    }
-  end
-
-  def build_pr_context
-    return nil unless @pull_request
-
-    github_service = GithubService.new(@user)
-    pr_data = github_service.get_pull_request(@pull_request.repository, @pull_request.number)
-
-    return nil unless pr_data
-
-    # Fetch additional PR data
-    comments = fetch_pr_comments(github_service)
-    review_comments = fetch_review_comments(github_service)
-    files = fetch_pr_files(github_service)
-
-    {
-      number: @pull_request.number,
-      title: @pull_request.title || pr_data.title,
-      body: @pull_request.body || pr_data.body,
-      state: @pull_request.state || pr_data.state,
-      author: @pull_request.author || pr_data.user.login,
-      head_branch: @pull_request.head_branch || pr_data.head.ref,
-      base_branch: @pull_request.base_branch || pr_data.base.ref,
-      head_sha: @pull_request.head_sha || pr_data.head.sha,
-      created_at: pr_data.created_at,
-      updated_at: pr_data.updated_at,
-      merged_at: pr_data.merged_at,
-      repository: {
-        full_name: @pull_request.repository.full_name,
-        name: @pull_request.repository.name,
-        owner: @pull_request.repository.owner
-      },
-      comments: format_comments(comments),
-      review_comments: format_comments(review_comments),
-      files: format_files(files)
-    }
-  rescue StandardError => e
-    Rails.logger.error("Failed to build PR context: #{e.message}")
-    {
-      number: @pull_request.number,
-      title: @pull_request.title,
-      state: @pull_request.state,
-      repository: {
-        full_name: @pull_request.repository.full_name
-      },
-      error: "Failed to fetch full PR details"
-    }
-  end
-
-  def build_conversation_context
-    # For direct messages (DMs): fetch conversation history from Slack API
-    # Only include if we're not in a thread (thread_ts is nil) and we have a channel_id
-    return [] if @thread_ts || !@channel_id
-
-    Rails.logger.info("Fetching conversation history for DM channel #{@channel_id}")
+  def base_context
+    context = []
     
-    # Get bot user ID to identify bot messages
-    bot_user_id = @slack_installation.bot_user_id rescue nil
-    
-    # Fetch conversation history from Slack API
-    # Fetch more messages than needed to ensure we can find the last user message
-    slack_messages = SlackService.get_conversation_history(
-      @slack_installation,
-      channel: @channel_id,
-      limit: 20
+    user_text = "Current user: #{@user.slack_username} (Slack ID: #{@user.slack_user_id}) - GitHub username: #{@user.primary_github_token&.github_username || 'not connected'}"
+    context << user_text if user_text.present?
+
+    context.compact
+  end
+
+  def add_message(**kwargs)
+    role = kwargs[:role] || "user"
+    @conversation << {
+      **kwargs,
+      role: role,
+    }
+    self
+  end
+
+  def add_function_call_message(tool_name, arguments)
+    add_message(
+      role: "function",
+      action: "call",
+      parts: [
+        {
+          functionCall: {
+            name: tool_name,
+            args: arguments
+          }
+        }
+      ]
     )
-
-    return [] if slack_messages.empty?
-
-    # Convert Slack messages to conversation format
-    # Determine role: bot messages are "assistant", user messages are "user"
-    messages = slack_messages.map do |msg|
-      msg_text = msg[:text] || msg["text"]
-      msg_user = msg[:user] || msg["user"]
-      is_bot = msg[:bot_id].present? || msg["bot_id"].present? || msg_user == bot_user_id
-      
-      {
-        role: is_bot ? "assistant" : "user",
-        content: msg_text,
-        timestamp: msg[:ts] || msg["ts"]
-      }
-    end
-
-    # Get last messages: at least the last 2 messages, or all messages from the last USER message onwards
-    return [] if messages.empty?
-
-    # Get the last 2 messages
-    last_2_messages = messages.last(2)
-    
-    # Check if the last user message is in the last 2 messages
-    last_user_in_last_2 = last_2_messages.any? { |msg| msg[:role] == "user" || msg["role"] == "user" }
-    
-    if last_user_in_last_2
-      # Last user message is in the last 2, return the last 2 messages
-      last_2_messages
-    else
-      # Last user message is further back, find it and return all messages from there onwards
-      last_user_index = messages.rindex { |msg| msg[:role] == "user" || msg["role"] == "user" }
-      
-      if last_user_index
-        # Return all messages from the last user message onwards
-        messages[last_user_index..-1]
-      else
-        # No user message found, return last 2 messages
-        last_2_messages
-      end
-    end
-  rescue StandardError => e
-    Rails.logger.error("Failed to build conversation context: #{e.message}")
-    Rails.logger.error(e.backtrace.join("\n"))
-    []
   end
 
-  def build_thread_messages_context
-    # Fetch thread messages if thread_ts is present (works for both DMs and channels)
-    # In DMs, if thread_ts is present, it means the user is in a thread
-    return [] unless @thread_ts && @channel_id
-
-    Rails.logger.info("Fetching thread messages for channel #{@channel_id}, thread #{@thread_ts}")
-    
-    messages = SlackService.get_thread_messages(
-      @slack_installation,
-      channel: @channel_id,
-      thread_ts: @thread_ts
+  def add_function_response_message(tool_name, content)
+    add_message(
+      role: "function",
+      action: "response",
+      parts: [
+        {
+          functionResponse: {
+            name: tool_name,
+            response: {
+              content: content
+            }
+          }
+        }
+      ]
     )
-
-    # Format messages for AI context
-    messages.map do |msg|
-      {
-        user: msg[:user] || msg["user"],
-        text: msg[:text] || msg["text"],
-        timestamp: msg[:ts] || msg["ts"],
-        is_bot: msg[:bot_id].present? || msg["bot_id"].present?
-      }
-    end
-  rescue StandardError => e
-    Rails.logger.error("Failed to build thread messages context: #{e.message}")
-    []
-  end
-
-  def build_user_mappings_context
-    mappings = UserMapping.where(slack_installation: @slack_installation)
-    mappings.map do |mapping|
-      {
-        slack_user_id: mapping.slack_user_id,
-        github_username: mapping.github_username,
-        first_name: mapping.first_name
-      }
-    end
-  end
-
-  def build_available_teams_context
-    # Get all unique teams from PRs' impacted_teams for this installation
-    teams = PullRequest.joins(:repository)
-      .where(repositories: { slack_installation_id: @slack_installation.id })
-      .where.not(impacted_teams: [])
-      .pluck(:impacted_teams)
-      .flatten
-      .uniq
-      .compact
-      .sort
-
-    teams
-  rescue StandardError => e
-    Rails.logger.error("Failed to build available teams context: #{e.message}")
-    []
-  end
-
-  def fetch_pr_comments(github_service)
-    return [] unless @pull_request
-
-    github_service.get_comments(@pull_request.repository, @pull_request.number)
-  rescue StandardError => e
-    Rails.logger.error("Failed to fetch PR comments: #{e.message}")
-    []
-  end
-
-  def fetch_review_comments(github_service)
-    return [] unless @pull_request
-
-    github_service.get_review_comments(@pull_request.repository, @pull_request.number)
-  rescue StandardError => e
-    Rails.logger.error("Failed to fetch review comments: #{e.message}")
-    []
-  end
-
-  def fetch_pr_files(github_service)
-    return [] unless @pull_request
-
-    github_service.get_files(@pull_request.repository, @pull_request.number)
-  rescue StandardError => e
-    Rails.logger.error("Failed to fetch PR files: #{e.message}")
-    []
-  end
-
-  def format_comments(comments)
-    return [] unless comments
-
-    comments.map do |comment|
-      {
-        author: comment.user&.login || comment.user&.name || "Unknown",
-        body: comment.body,
-        created_at: comment.created_at
-      }
-    end
-  end
-
-  def format_files(files)
-    return [] unless files
-
-    files.map do |file|
-      {
-        filename: file.filename,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        changes: file.changes
-      }
-    end
   end
 end

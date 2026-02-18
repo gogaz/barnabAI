@@ -1,17 +1,15 @@
 # Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
 
 one:
-  github_repo_id: 1
-  name: MyString
-  full_name: MyString
-  owner: MyString
-  webhook_secret: MyString
-  access_token_encrypted: MyText
+  slack_installation: one
+  github_repo_id: 12345
+  name: test-repo
+  full_name: owner/test-repo
+  owner: owner
 
 two:
-  github_repo_id: 1
-  name: MyString
-  full_name: MyString
-  owner: MyString
-  webhook_secret: MyString
-  access_token_encrypted: MyText
+  slack_installation: two
+  github_repo_id: 67890
+  name: another-repo
+  full_name: another-owner/another-repo
+  owner: another-owner

@@ -1,13 +1,13 @@
 # Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
 
 one:
-  slack_user_id: MyString
-  github_username: MyString
-  first_name: MyString
-  repository: one
+  slack_user_id: U123
+  github_username: Octocat
+  slack_display_name: Catty
+  slack_email: hello@example.com
 
 two:
-  slack_user_id: MyString
-  github_username: MyString
-  first_name: MyString
-  repository: two
+  slack_user_id: U456
+  github_username: Einstein
+  slack_display_name: Robert
+  slack_email: hello@mail.com

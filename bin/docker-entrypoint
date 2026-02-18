@@ -1,11 +1,40 @@
 #!/bin/bash -e
 
+# Parse DATABASE_URL to extract connection parameters
+parse_database_url() {
+  if [ -n "${DATABASE_URL}" ]; then
+    # Parse postgresql://user:pass@host:port/dbname
+    local url="${DATABASE_URL#postgresql://}"
+    local user_pass="${url%%@*}"
+    local host_port_db="${url#*@}"
+    
+    DB_USER="${user_pass%%:*}"
+    DB_PASS="${user_pass#*:}"
+    DB_PASS="${DB_PASS%%@*}"
+    DB_HOST="${host_port_db%%:*}"
+    local port_db="${host_port_db#*:}"
+    DB_PORT="${port_db%%/*}"
+    DB_NAME="${port_db#*/}"
+    # Remove query string if present
+    DB_NAME="${DB_NAME%%\?*}"
+  else
+    # Fallback to individual environment variables
+    DB_USER="${DATABASE_USERNAME:-postgres}"
+    DB_PASS="${DATABASE_PASSWORD:-}"
+    DB_HOST="${DATABASE_HOST:-postgres}"
+    DB_PORT="${DATABASE_PORT:-5432}"
+    DB_NAME="${DATABASE_NAME:-barnabai_production}"
+  fi
+}
+
 # Wait for PostgreSQL to be ready
 wait_for_postgres() {
   local max_attempts=30
   local attempt=0
   
-  until pg_isready -h "${DATABASE_HOST:-postgres}" -p "${DATABASE_PORT:-5432}" -U "${DATABASE_USERNAME:-postgres}" >/dev/null 2>&1; do
+  parse_database_url
+  
+  until pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
       echo "PostgreSQL is not ready after $max_attempts attempts. Exiting."
@@ -26,8 +55,8 @@ run_migrations() {
 
 # Main entrypoint logic
 main() {
-  # Wait for PostgreSQL if DATABASE_HOST is set
-  if [ -n "${DATABASE_HOST}" ]; then
+  # Wait for PostgreSQL if DATABASE_URL or DATABASE_HOST is set
+  if [ -n "${DATABASE_URL}" ] || [ -n "${DATABASE_HOST}" ]; then
     wait_for_postgres
   fi
 
@@ -37,7 +66,7 @@ main() {
   # Run migrations for web server, jobs, and socket mode services
   if [[ "$cmd" == *"rails server"* ]] || \
      [[ "$cmd" == *"solid_queue:start"* ]] || \
-     [[ "$cmd" == *"rails runner"* ]] && [[ "$cmd" == *"SlackService"* ]]; then
+     [[ "$cmd" == *"rails runner"* ]] && [[ "$cmd" == *"Slack::Client"* ]]; then
     run_migrations
   fi
 
