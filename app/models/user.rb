@@ -2,8 +2,7 @@
 
 class User < ApplicationRecord
   has_many :github_tokens, dependent: :destroy
-  has_many :conversations, dependent: :destroy
-  
+
   # Primary GitHub token (first one created)
   has_one :primary_github_token, -> { order(created_at: :asc) }, class_name: "GithubToken", inverse_of: :user
 
