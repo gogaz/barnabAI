@@ -46,4 +46,5 @@ gem "bootsnap", ">= 1.4.4", require: false
 group :development do
   # Use console on exceptions pages [https://github.com/rails/web-console]
   gem "web-console"
+  gem "rubocop-rails-omakase", require: false
 end
