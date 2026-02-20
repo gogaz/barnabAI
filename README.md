@@ -14,7 +14,6 @@ It was heavily vibe-coded, use at your own risks.
 - 👤 **Per-User GitHub Authentication**: Each user connects their own GitHub account
 - 💬 **Conversational Interface**: Talk to the bot naturally in Slack
 - 🎯 **PR Actions**: Merge, comment, approve, get info, create PRs, run specs, and more
-- 🔄 **Slack AI**: Uses the new Slack Agents interface for seamless Slack integration
 
 ## Prerequisites
 
@@ -109,10 +108,6 @@ bin/rails db:create && rails db:migrate
    - Go back to **OAuth & Permissions**
    - Click **Reinstall to Workspace** (or **Install to Workspace** if not yet installed)
    - Authorize the app with the new event subscriptions
-
-#### 3.5 Enable Agent mode
-
-This enables the new Slack Agents interface, which allows the bot to be used in a sidebar and have AI-like direct messages.
 
 ### 4. GitHub OAuth App Setup
 
