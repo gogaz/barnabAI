@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 class PullRequest < ApplicationRecord
-  belongs_to :repository
   has_many :slack_threads, dependent: :destroy
   has_many :conversations, through: :slack_threads
 
