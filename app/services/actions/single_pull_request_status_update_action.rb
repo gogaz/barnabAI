@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 class Actions::SinglePullRequestStatusUpdateAction < Actions::BaseAction
-  include RepositoryResolverConcern
   include Actions::HasFunctionMetadata
 
   function_code "single_pull_request_status_update"

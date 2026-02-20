@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 class Actions::StartPullRequestWorkflowAction < Actions::BaseAction
-  include RepositoryResolverConcern
   include Actions::HasFunctionMetadata
 
   function_code "github_start_pull_request_workflow"
