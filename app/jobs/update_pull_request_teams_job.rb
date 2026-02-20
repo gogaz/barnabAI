@@ -3,26 +3,24 @@
 class UpdatePullRequestTeamsJob < ApplicationJob
   queue_as :default
 
-  def perform(repository_id, pr_number)
-    repository = Repository.find_by(id: repository_id)
-    return unless repository
+  def perform(repository_full_name, pr_number)
+    user = User.joins(:github_tokens).order(:created_at).first
+    unless user
+      Rails.logger.warn('No user with GitHub token found, skipping UpdatePullRequestTeamsJob')
+      return
+    end
 
-    # Find or create the PR record
     pull_request = PullRequest.find_or_initialize_by(
-      repository: repository,
+      repository_full_name: repository_full_name,
       number: pr_number
     )
 
-    # If PR doesn't exist in our DB yet, we need to fetch basic info from GitHub
-    if pull_request.new_record?
-      user = repository.slack_installation.users.first
-      return unless user
+    github_service = Github::Client.new(user)
 
-      github_service = Github::Client.new(user)
-      github_pr = github_service.get_pull_request(repository, pr_number)
+    if pull_request.new_record?
+      github_pr = github_service.get_pull_request(repository_full_name, pr_number)
       return unless github_pr
 
-      # Set basic PR attributes
       pull_request.assign_attributes(
         github_pr_id: github_pr.id,
         title: github_pr.title,
@@ -39,25 +37,14 @@ class UpdatePullRequestTeamsJob < ApplicationJob
       )
     end
 
-    # Get the user for GitHub API access
-    user = repository.slack_installation.users.first
-    return unless user
-
-    github_service = Github::Client.new(user)
-
-    # Fetch files changed in the PR
-    files = github_service.get_files(repository, pr_number)
+    files = github_service.get_files(repository_full_name, pr_number)
     return unless files&.any?
 
-    # Determine impacted teams using CodeownersMatcher
-    matcher = Github::CodeOwnersMatcher.new(github_service, repository)
-    impacted_teams = matcher.determine_impacted_teams(files)
-
-    # Update the PR with impacted teams
-    pull_request.impacted_teams = impacted_teams
+    matcher = Github::CodeOwnersMatcher.new(github_service, repository_full_name)
+    pull_request.impacted_teams = matcher.determine_impacted_teams(files)
     pull_request.save!
   rescue StandardError => e
-    Rails.logger.error("Failed to update PR teams for #{repository_id}/#{pr_number}: #{e.message}")
+    Rails.logger.error("Failed to update PR teams for #{repository_full_name}/#{pr_number}: #{e.message}")
     Rails.logger.error(e.backtrace.join("\n"))
     raise
   end

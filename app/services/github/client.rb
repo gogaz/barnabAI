@@ -53,20 +53,7 @@ module Github
 
     # List PRs for a repository
     def list_pull_requests(repository, state: "open", limit: 10)
-      client.pull_requests(repository.full_name, state: state, per_page: limit)
-    end
-
-    # List PRs for a repository with since parameter (filters by updated_at)
-    def list_pull_requests_since(repository, since:, state: "all", limit: 100)
-      prs = client.pull_requests(
-        repository.full_name,
-        state: state,
-        sort: "updated",
-        direction: "desc",
-        per_page: limit
-      )
-
-      prs.select { |pr| pr.updated_at >= since }
+      client.pull_requests(repository, state: state, per_page: limit)
     end
 
     # Merge a pull request
@@ -124,13 +111,13 @@ module Github
     # Re-run failed jobs from a workflow run
     def rerun_failed_workflow(repository, run_id)
       client.post(
-        "/repos/#{repository.full_name}/actions/runs/#{run_id}/rerun-failed-jobs"
+        "/repos/#{repository}/actions/runs/#{run_id}/rerun-failed-jobs"
       )
     end
 
     # Get workflow runs for a specific branch/PR
     def get_workflow_runs(repository, branch: nil, workflow_id: nil, per_page: 10)
-      path = "/repos/#{repository.full_name}/actions/runs"
+      path = "/repos/#{repository}/actions/runs"
       params = { per_page: per_page }
       params[:branch] = branch if branch
       params[:workflow_id] = workflow_id if workflow_id
@@ -161,7 +148,7 @@ module Github
       options = {}
       options[:ref] = ref if ref
 
-      content = client.contents(repository.full_name, path: file_path, **options)
+      content = client.contents(repository, path: file_path, **options)
       decoded_content = Base64.decode64(content.content) if content.content
 
       {

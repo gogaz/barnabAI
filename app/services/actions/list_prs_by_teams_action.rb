@@ -38,22 +38,15 @@ class Actions::ListPrsByTeamsAction < Actions::BaseAction
     # Calculate the cutoff date
     cutoff_date = days.days.ago
 
-    # Get repositories for the slack installation
-    repositories = @slack_installation&.repositories || []
-    raise ArgumentError, "No repositories found for this installation" if repositories.empty?
-
     # Find PRs that have any of the specified teams in their impacted_teams
-    # Exclude PRs that contain " MEP " (case sensitive) in the title
+    # Exclude PRs that contain "MEP" (case sensitive) in the title
     # Filter by github_created_at >= cutoff_date
     # Use @> (contains) operator: check if impacted_teams contains any of the teams
-    # For each team, check if impacted_teams contains that team using @>
-    team_conditions = teams_array.map { "impacted_teams::text[] @> ARRAY[?]::text[]" }
-    matching_prs = PullRequest.joins(:repository)
-      .where(repositories: { slack_installation_id: @slack_installation.id })
+    team_conditions = teams_array.map { 'impacted_teams::text[] @> ARRAY[?]::text[]' }
+    matching_prs = PullRequest
       .where("(#{team_conditions.join(' OR ')})", *teams_array)
-      .where.not("title LIKE ?", "%MEP%")
-      .where("github_created_at >= ?", cutoff_date)
-      .includes(:repository)
+      .where.not('title LIKE ?', '%MEP%')
+      .where('github_created_at >= ?', cutoff_date)
       .order(github_created_at: :desc)
       .limit(50)
 
@@ -63,7 +56,7 @@ class Actions::ListPrsByTeamsAction < Actions::BaseAction
 
     # Fetch file diffs for each PR
     pr_list_with_diffs = matching_prs.map do |pr|
-      files = github_client.get_files(pr.repository, pr.number)
+      files = github_client.get_files(pr.repository_full_name, pr.number)
       file_changes = files.map do |file|
         {
           filename: file.filename,
@@ -79,8 +72,8 @@ class Actions::ListPrsByTeamsAction < Actions::BaseAction
         number: pr.number,
         title: pr.title,
         state: pr.state,
-        repository: pr.repository.full_name,
-        url: "https://github.com/#{pr.repository.full_name}/pull/#{pr.number}",
+        repository: pr.repository_full_name,
+        url: "https://github.com/#{pr.repository_full_name}/pull/#{pr.number}",
         impacted_teams: pr.impacted_teams,
         created_at: pr.github_created_at&.strftime("%Y-%m-%d"),
         files: file_changes
