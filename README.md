@@ -4,6 +4,10 @@ BarnabAI is an intelligent Slack assistant that helps developers manage GitHub p
 It uses AI to understand natural language commands and execute GitHub actions on your behalf.
 It was heavily vibe-coded, use at your own risks.
 
+<p align="center">
+   <img height="256" alt="mascot_chill" src="https://github.com/user-attachments/assets/6332bdb3-d0db-4cbe-a84f-ba1104fdd785" />
+</p>
+
 ## Features
 
 - 🤖 **Intelligent Intent Detection**: Uses AI to understand what you want to do with PRs
