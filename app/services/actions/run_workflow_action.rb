@@ -64,4 +64,3 @@ class Actions::RunWorkflowAction < Actions::BaseAction
     end
   end
 end
-

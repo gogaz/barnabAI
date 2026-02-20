@@ -48,4 +48,3 @@ class Actions::RespondToCommentAction < Actions::BaseAction
     "Replied to comment ##{comment_id}"
   end
 end
-

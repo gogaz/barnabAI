@@ -39,4 +39,3 @@ class Actions::CreateCommentAction < Actions::BaseAction
     "Comment posted to #{response.html_url}"
   end
 end
-

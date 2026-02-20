@@ -35,4 +35,3 @@ class Actions::GetPRDetailsAction < Actions::BaseAction
     pr_details
   end
 end
-

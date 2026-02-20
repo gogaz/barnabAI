@@ -145,4 +145,3 @@ class ProcessGithubWebhookJobTest < ActiveJob::TestCase
     assert_equal "88888", existing_pr.github_pr_id
   end
 end
-
