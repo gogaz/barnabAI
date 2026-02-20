@@ -94,7 +94,6 @@ bin/rails db:create && bin/rails db:migrate
    - **Note**: You don't need to set a Request URL when using Socket Mode (leave it empty or ignore it)
 3. In **Subscribe to bot events**, add:
    - `message.im` - Receive direct messages to the bot
-   - `message.channels` - Receive messages in public channels (including threads)
    - `app_mention` - Receive mentions of the bot in channels
 
 
