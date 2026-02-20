@@ -24,7 +24,7 @@ gem "faye-websocket", "~> 0.11"
 gem "eventmachine", "~> 1.2"
 
 # GitHub API client
-gem "octokit", "~> 7.0"
+gem "octokit", "~> 10.0"
 
 # CODEOWNERS file parser
 gem "codeowner_parser"
