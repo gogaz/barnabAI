@@ -49,8 +49,6 @@ services:
       # Optional Encryption Keys
       SLACK_TOKEN_ENCRYPTION_KEY: ${SLACK_TOKEN_ENCRYPTION_KEY}
       GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY}
-      # Socket Mode (disabled in web service, runs in separate service)
-      ENABLE_SLACK_SOCKET_MODE: "false"
       # Rails Configuration
       RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}

@@ -143,7 +143,6 @@ Then fill in the values:
 | `LLM_PROVIDER` | LLM provider to use (currently only `gemini` is supported) |
 | `GEMINI_API_KEY` | Your Gemini API key |
 | `GEMINI_MODEL` | Gemini model to use (e.g. `gemini-2.5-flash`) |
-| `ENABLE_SLACK_SOCKET_MODE` | Set to `true` to enable Socket Mode on startup |
 | `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | ActiveRecord encryption primary key |
 | `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | ActiveRecord encryption deterministic key |
 | `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | ActiveRecord encryption key derivation salt |
@@ -168,7 +167,7 @@ The app will be available at `http://localhost:3000`
 
 **Starting Socket Mode**:
 
-If `ENABLE_SLACK_SOCKET_MODE` is set to `true`, Socket Mode starts automatically with the server. You can also start it manually:
+You can start it either ways:
 
 ```bash
 bin/rails slack:connect
