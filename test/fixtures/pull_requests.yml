@@ -1,7 +1,6 @@
 # Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
 
 one:
-  repository: one
   github_pr_id: 111
   number: 1
   title: Test PR One
@@ -12,7 +11,6 @@ one:
   head_branch: feature-one
 
 two:
-  repository: two
   github_pr_id: 222
   number: 2
   title: Test PR Two
