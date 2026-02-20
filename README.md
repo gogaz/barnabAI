@@ -17,7 +17,7 @@ It was heavily vibe-coded, use at your own risks.
 
 ## Prerequisites
 
-- Ruby 4
+- Ruby 4.0.1
 - PostgreSQL
 - A Slack workspace where you can install apps
 - A GitHub account
@@ -29,21 +29,23 @@ It was heavily vibe-coded, use at your own risks.
 
 ```bash
 git clone <repository-url>
-cd barnabaI
+cd barnabAI
 bundle install
 ```
 
 ### 2. Database Setup
 
-Create and configure your PostgreSQL database:
+Create and configure your PostgreSQL databases. The app uses separate databases for the main data, cache, queue, and Action Cable:
 
 ```bash
-# DATABASE_URL environment variable
-# Format: postgresql://username:password@host:port/database_name
-export DATABASE_URL=postgresql://postgres:your_password@localhost:5432/barnabai_development
+# Set in your .env file:
+DATABASE_URL=postgresql://postgres:password@localhost:5432/barnabai_development
+CACHE_DATABASE_URL=postgresql://postgres:password@localhost:5432/barnabai_development_cache
+QUEUE_DATABASE_URL=postgresql://postgres:password@localhost:5432/barnabai_development_queue
+CABLE_DATABASE_URL=postgresql://postgres:password@localhost:5432/barnabai_development_cable
 
 # Run migrations
-bin/rails db:create && rails db:migrate
+bin/rails db:create && bin/rails db:migrate
 ```
 
 ### 3. Slack App Setup
@@ -69,14 +71,8 @@ bin/rails db:create && rails db:migrate
    - `reactions:write` - Add reactions to messages
    - `users:read` - Read user information
 
-3. Under **Redirect URLs**, add:
-   ```
-   http://localhost:3000/slack/oauth/callback
-   ```
-   (Replace with your production URL when deploying)
-
-4. Scroll up and click **Install to Workspace**
-5. Copy the **Client ID** and **Client Secret**
+3. Scroll up and click **Install to Workspace**
+4. Copy the **Bot User OAuth Token** (starts with `xoxb-`) — this is your `SLACK_BOT_TOKEN`
 
 #### 3.3 Enable Socket Mode
 
@@ -117,27 +113,49 @@ bin/rails db:create && rails db:migrate
 2. Click **New OAuth App**
 3. Fill in:
    - **Application name**: BarnabAI
-   - **Homepage URL**: your production URL
-   - **Authorization callback URL**: `https://example.com/github/oauth/callback`
+   - **Homepage URL**: `APP_PROTOCOL://APP_HOST` (e.g. `https://example.com`)
+   - **Authorization callback URL**: `APP_PROTOCOL://APP_HOST/github/oauth/callback` (e.g. `https://example.com/github/oauth/callback`)
 4. Click **Register application**
 5. Copy the **Client ID** and generate a **Client Secret**
 
+### 5. Environment Variables
 
-### 6. Environment Variables
-
-Create a `.env` file in the root directory using .env.example as a template
-**For production**, use Rails credentials or a secrets management service:
+Create a `.env` file in the root directory using `.env.example` as a template:
 
 ```bash
-# Edit credentials
-EDITOR=vim bin/rails credentials:edit
-
-# Add:
-slack_token_encryption_key: your-encryption-key
-github_token_encryption_key: your-encryption-key
+cp .env.example .env
 ```
 
-### 7. Run the Application
+Then fill in the values:
+
+| Variable | Description |
+|---|---|
+| `APP_HOST` | Your app's hostname (e.g. `example.com` or `localhost:3000`) |
+| `APP_PROTOCOL` | `https` for production, `http` for local dev |
+| `DATABASE_URL` | PostgreSQL connection string for the main database |
+| `CACHE_DATABASE_URL` | PostgreSQL connection string for the cache database |
+| `QUEUE_DATABASE_URL` | PostgreSQL connection string for the queue database |
+| `CABLE_DATABASE_URL` | PostgreSQL connection string for the Action Cable database |
+| `SLACK_APP_TOKEN` | App-level token from Socket Mode setup (starts with `xapp-`) |
+| `SLACK_BOT_TOKEN` | Bot User OAuth Token from OAuth & Permissions (starts with `xoxb-`) |
+| `SLACK_BOT_USER_ID` | Bot's Slack user ID — run `bin/rails slack:test_auth` to retrieve it |
+| `GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
+| `LLM_PROVIDER` | LLM provider to use (currently only `gemini` is supported) |
+| `GEMINI_API_KEY` | Your Gemini API key |
+| `GEMINI_MODEL` | Gemini model to use (e.g. `gemini-2.5-flash`) |
+| `ENABLE_SLACK_SOCKET_MODE` | Set to `true` to enable Socket Mode on startup |
+| `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | ActiveRecord encryption primary key |
+| `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | ActiveRecord encryption deterministic key |
+| `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | ActiveRecord encryption key derivation salt |
+
+You can generate the ActiveRecord encryption keys with:
+
+```bash
+bin/rails db:encryption:init
+```
+
+### 6. Run the Application
 
 ```bash
 # Start the Rails server
@@ -151,36 +169,30 @@ The app will be available at `http://localhost:3000`
 
 **Starting Socket Mode**:
 
-Run:
+If `ENABLE_SLACK_SOCKET_MODE` is set to `true`, Socket Mode starts automatically with the server. You can also start it manually:
+
 ```bash
-rails slack:connect
+bin/rails slack:connect
 ```
 
-2. **Or start manually in Rails console**:
-   ```bash
-   bin/rails console
-   # Then in the console:
-   app_token = ENV.fetch("SLACK_APP_TOKEN")
-   Slack::SocketConnector.start(app_token: app_token)
-   ```
+Or from the Rails console:
+```bash
+bin/rails console
+# Then in the console:
+app_token = ENV.fetch("SLACK_APP_TOKEN")
+Slack::SocketConnector.start(app_token: app_token)
+```
 
 You should see connection logs indicating the WebSocket is connected.
 
-### 8. Install the Slack App
-
-1. Visit `http://localhost:3000` (or your production URL)
-2. Click **Install to Slack**
-3. Authorize the app in your workspace
-4. You should see a success message
-
-### 9. Connect Your GitHub Account
+### 7. Connect Your GitHub Account
 
 Users need to connect their GitHub account to perform actions:
 
 1. In Slack, mention the bot or send a message in a PR thread
 2. The bot will prompt you to connect your GitHub account
 3. Click the link to authorize GitHub access
-4. You'll be redirected back to Slack
+4. You're all set!
 
 **Note**: Each user must connect their own GitHub account. Actions are performed on behalf of the user who sent the message.
 
@@ -198,4 +210,4 @@ The bot can detect and execute many intents, take a look at actions for more inf
 
 ### Token Encryption
 
-All sensitive tokens (Slack bot tokens, GitHub tokens) are encrypted using `ActiveSupport::MessageEncryptor` before storage.
+All sensitive tokens (Slack bot tokens, GitHub tokens) are encrypted using `ActiveRecord::Encryption` before storage. The three `ACTIVE_RECORD_ENCRYPTION_*` environment variables are required for this to work.
