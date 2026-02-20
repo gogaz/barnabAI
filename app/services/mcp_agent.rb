@@ -15,21 +15,22 @@ class MCPAgent
 
       return response[:text] if response[:tools].blank?
 
-      terminate = execute_tool_actions(context, response[:tools])
-      return response[:text] if terminate
+      terminate = execute_tool_actions(context, response)
+      return if terminate
 
       context.add_assistant_message(response[:text]) if response[:text].present?
-      puts context.inspect
     end
   end
 
   private
 
-  def execute_tool_actions(context, tool_calls)
+  def execute_tool_actions(context, response)
+    tool_calls = response[:tools]
     tool_calls.any? do |call|
       klass = action_class_for(call[:name])
       fn = klass.new(context.user, context: context)
 
+      parameters = parameters
       begin
         result = fn.execute(call[:parameters])
       rescue StandardError => e

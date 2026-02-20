@@ -57,7 +57,8 @@ bin/rails db:create && rails db:migrate
 1. Go to **OAuth & Permissions** in the sidebar
 2. Under **Scopes** → **Bot Token Scopes**, add:
    - `app_mentions:read` - Listen for app mentions
-   - `channels:history` - Read channel history (for threads)
+   - `channels:history` - Read channel history (for threads in public channels)
+   - `channels:read` - View basic info about public channels (required for conversations.replies)
    - `chat:write` - Send messages
    - `im:history` - Read direct messages threads
    - `im:read` - Read direct messages
@@ -94,9 +95,9 @@ bin/rails db:create && rails db:migrate
    - **Note**: You don't need to set a Request URL when using Socket Mode (leave it empty or ignore it)
 3. In **Subscribe to bot events**, add:
    - `message.im` - Receive direct messages to the bot
+   - `message.channels` - Receive messages in public channels (including threads)
    - `app_mention` - Receive mentions of the bot in channels
 
-   Without `message.channels` you won't receive messages sent in threads, even if the bot is mentioned.
 
 4. Click **Save Changes** at the bottom
 

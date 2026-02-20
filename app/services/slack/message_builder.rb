@@ -12,6 +12,11 @@ module Slack
       @blocks = blocks || []
     end
 
+    def send!(channel:, thread_ts: nil)
+      Slack::Client.send_message(channel:, thread_ts:, **to_h)
+      nil
+    end
+
     # @param text [String, Hash] The text content of the section block (string will be converted to mrkdwn format)
     # @param fields [String, Hash, Array<String|Hash>] An array of strings to be added as fields in the section block
     # @return [Slack::MessageBuilder] Returns self to allow chaining

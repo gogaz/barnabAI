@@ -1,5 +1,5 @@
 Rails.application.routes.draw do
-  root "github_oauth#index"
+  root to: 'home#index'
 
   get "/github/oauth", to: "github_oauth#index", as: :github_oauth
   get "/github/oauth/authorize", to: "github_oauth#authorize", as: :github_oauth_authorize

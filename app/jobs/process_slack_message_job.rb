@@ -28,8 +28,8 @@ class ProcessSlackMessageJob < ApplicationJob
     error_builder = Slack::MessageBuilder.new(text: error_message)
     
     Slack::Client.send_message(
-      channel: channel_id,
-      thread_ts: thread_ts,
+      channel: user_id,
+      thread_ts: thread_ts || message_ts,
       **error_builder.to_h
     )
 

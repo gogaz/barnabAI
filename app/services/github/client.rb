@@ -5,29 +5,42 @@ require "base64"
 
 module Github
   class Client
-    include GithubClientConcern
-
     def initialize(user)
       @user = user
     end
 
-    # Search for pull requests using GitHub search API
+    # Search for pull requests using GitHub search API (returns full PR objects, one API call per result)
     def search_pull_requests(query, limit: 50)
-      # Github does not allow searching PRs directly, so we search issues and then fetch PR details for each result
       results = client.search_issues(query, per_page: limit)
       results.items.filter_map do |issue|
-        url = issue.repository_url || issue.html_url
-        url_parts = url.split("/")
+        repo_full_name = issue.repository&.full_name || extract_repo_from_url(issue.repository_url || issue.html_url)
+        next unless repo_full_name
 
-        repo_full_name = if url.include?("/repos/")
-            "#{url_parts[url_parts.index("repos") + 1]}/#{url_parts[url_parts.index("repos") + 2]}"
-          else
-            github_index = url_parts.index("github.com") || url_parts.index("api.github.com")
-            "#{url_parts[github_index + 1]}/#{url_parts[github_index + 2]}"
-          end
+        client.pull_request(repo_full_name, issue.number)
+      end
+    end
 
-        pr_number = issue.number
-        client.pull_request(repo_full_name, pr_number)
+    # Search for pull requests using GitHub search API (single API call, no per-result fetches)
+    # Returns minimal PR info from the search response: repository, number, title, html_url, state, author, dates
+    def search_pull_requests_list(query, limit: 50)
+      results = client.search_issues(query, per_page: limit)
+      results.items.filter_map do |issue|
+        next unless issue.pull_request # Skip if it's an issue, not a PR
+
+        repo_full_name = issue.repository&.full_name
+        repo_full_name ||= extract_repo_from_url(issue.repository_url || issue.html_url)
+
+        {
+          repository: repo_full_name,
+          number: issue.number,
+          title: issue.title,
+          html_url: issue.html_url,
+          node_id: issue.node_id,
+          state: issue.state,
+          author: issue.user&.login,
+          created_at: issue.created_at,
+          updated_at: issue.updated_at
+        }
       end
     end
 
@@ -237,8 +250,30 @@ module Github
 
     private
 
+    def extract_repo_from_url(url)
+      return nil if url.blank?
+
+      url_parts = url.split("/")
+      if url.include?("/repos/")
+        "#{url_parts[url_parts.index("repos") + 1]}/#{url_parts[url_parts.index("repos") + 2]}"
+      else
+        github_index = url_parts.index("github.com") || url_parts.index("api.github.com")
+        return nil unless github_index
+
+        "#{url_parts[github_index + 1]}/#{url_parts[github_index + 2]}"
+      end
+    end
+
     def client
-      @client ||= github_client(@user)
+      @client ||= begin
+        github_token = @user.primary_github_token
+        raise ArgumentError, "User has no GitHub token connected" unless github_token
+
+        token = github_token.token
+        raise ArgumentError, "GitHub token is invalid or expired" unless token
+
+        Octokit::Client.new(access_token: token)
+      end
     end
   end
 end

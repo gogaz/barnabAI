@@ -10,14 +10,41 @@ class ChatbotService
     # Check if user has GitHub token connected - required for all operations
     unless @user.has_github_token?
       Slack::Client.send_message(
-        channel: channel_id,
-        thread_ts: thread_ts,
+        channel: @user.slack_user_id,
         **build_github_oauth_invitation_message.to_h
       )
       return
     end
 
-    # Build required context: user info, thread history, etc.
+    context = build_initial_context(user_message, channel_id:, thread_ts:, message_ts:)
+
+    agent = ::MCPAgent.new(@user, [
+      Actions::ApprovePRAction,
+      Actions::ClosePRAction,
+      Actions::MergePRAction,
+      Actions::CreateCommentAction,
+      Actions::RespondToCommentAction,
+      Actions::RunWorkflowAction,
+      Actions::GetPRDetailsAction,
+      Actions::SearchPullRequestsAction,
+      Actions::SummarizeMyCurrentWorkAction,
+      Actions::ListUserRepositoriesAction,
+    ])
+    message = agent.run(context)
+    # Reply in thread for channel messages, channel ids for direct messages start with 'D...'
+    thread_ts = message_ts if channel_id.start_with?('D') && thread_ts.nil?
+
+    Slack::Client.send_message(
+      channel: channel_id,
+      thread_ts: thread_ts,
+      text: message
+    ) if message.present?
+  end
+
+  private
+
+  def build_initial_context(user_message, channel_id:, thread_ts:, message_ts:)
+    # Initial context contains conversation history and github <> slack user mappings
     context = ContextBuilderService.new(
       @user,
       channel_id: channel_id,
@@ -42,12 +69,6 @@ class ChatbotService
     end
     context.add_user_message(user_message)
 
-    context.add_function_call(
-      "list_user_repositories",
-      { user: @user.primary_github_token.github_username },
-      Github::Client.new(@user).list_user_repositories
-    )
-
     mappings = UserMapping.where(slack_user_id: required_mappings).to_h do |mapping|
       [mapping.slack_user_id, mapping.slice(:github_username, :slack_username)]
     end
@@ -57,51 +78,7 @@ class ChatbotService
       {},
       mappings
     )
-
-    agent = ::MCPAgent.new(@user, [
-      Actions::ApprovePRAction,
-      Actions::ClosePRAction,
-      Actions::MergePRAction,
-      Actions::CreateCommentAction,
-      Actions::RespondToCommentAction,
-      Actions::RunWorkflowAction,
-      Actions::GetPRDetailsAction
-    ])
-    message = agent.run(context)
-    Slack::Client.send_message(
-      channel: channel_id,
-      thread_ts: thread_ts,
-      text: message
-    ) if message.present?
-
-    # Detect and execute intent
-    #structured_prompt = context.build_structured_prompt(functions: [
-    #  Actions::SummarizeMyCurrentWorkAction,
-    #  Actions::SinglePullRequestStatusUpdateAction,
-    #  Actions::ListPrsByTeamsAction,
-    #  Actions::UpdatePullRequestAction,
-    #  #Actions::AskClarificationAction,
-    #  #Actions::GeneralChatAction
-    #])
-    #structured_result = @ai_provider.structured_output(structured_prompt)
-    #if structured_result[:tools].present?
-    #  action_service = ActionExecutionService.new(@user, context: context)
-    #  tool = structured_result[:tools].first
-    #  response_messages = action_service.execute(tool[:name], tool[:parameters])
-    #else
-    #  response_messages = [Slack::MessageBuilder.new(text: structured_result[:text])]
-    #end
-#
-    #response_messages.each do |message_builder|
-    #  Slack::Client.send_message(
-    #    channel: channel_id,
-    #    thread_ts: thread_ts,
-    #    **message_builder.to_h
-    #  )
-    #end
   end
-
-  private
 
   def build_github_oauth_invitation_message
     oauth_url = Rails.application.routes.url_helpers.github_oauth_authorize_url(

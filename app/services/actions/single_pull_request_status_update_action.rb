@@ -50,7 +50,7 @@ class Actions::SinglePullRequestStatusUpdateAction < Actions::BaseAction
     context.add_function_call("github_get_pull_reviews", function_args, github_client.get_reviews(repository, pr_number))
     context.add_function_call("github_get_pull_check_runs", function_args, github_client.get_check_runs(repository, pr_data[:head][:sha]))
     files = github_client.get_files(repository, pr_number)
-    context.add_function_call("github_get_pull_impacted_teams", function_args, CodeOwnersMatcher.new(github_client, repository).determine_impacted_teams(files, ref: pr_data.dig(:base, :ref)))
+    context.add_function_call("github_get_pull_impacted_teams", function_args, Github::CodeOwnersMatcher.new(github_client, repository).determine_impacted_teams(files, ref: pr_data.dig(:base, :ref)))
 
     ai_provider.chat_completion(
       context.build_prompt,

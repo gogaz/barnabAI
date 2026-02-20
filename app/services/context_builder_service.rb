@@ -12,7 +12,7 @@ class ContextBuilderService
     "Always respond in the user's language (match the language of their message).",
     "Always check for context in the messages to understand the user's intent and the context of the conversation.",
     "Format your messages using Slack mrkdwn syntax: use <URL|text> for hyperlinks, *bold* for bold, _italic_ for italics, ~strikethrough~ for strikethrough, and > for blockquotes. Use single backticks for inline code and triple backticks without language name for code blocks. For lists, use a hyphen - followed by a space.",
-    "Always refer to users with their Slack User ID using the <@UABC123> format to ensure they get notified, instead of using their name.",
+    "Always use the <@UABC123> format including Slack User ID when you need to refer to users to ensure they get notified, never use their name.",
     "NEVER use the standard Markdown [text](URL) format. NEVER include the language code after the 3 backticks in code snippets. Escape the characters <, >, and & by replacing them with &lt;, &gt;, and &amp; respectively.",
     "Always prefer mrkdwn over plain text when you want to format your messages. If the message requires formatting (like links, bold, lists, etc.), use mrkdwn syntax. Only use plain text when the message is very simple and doesn't require any formatting.",
   ].freeze

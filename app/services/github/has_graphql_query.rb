@@ -5,20 +5,25 @@ module Github
     extend ActiveSupport::Concern
 
     class_methods do
-      def graphql_query(query_string)
-        define_method(:fetch_raw_data) do |variables = {}|
-          execute_graphql(query_string, variables)
-        end
+      # Register a named GraphQL query. Call multiple times to register multiple queries.
+      # Use run_graphql(name, variables) to execute.
+      def graphql_query(name, query_string)
+        graphql_queries[name] = query_string
+      end
+
+      def graphql_queries
+        @graphql_queries ||= {}
       end
     end
 
-    private
+    # Run a GraphQL query by name (symbol) or pass a raw query string directly.
+    def run_graphql(query_or_name, variables = {})
+      query_string = query_or_name.is_a?(Symbol) ? self.class.graphql_queries[query_or_name] : query_or_name
+      raise ArgumentError, "Unknown query: #{query_or_name}" if query_string.blank?
 
-    def execute_graphql(query, variables)
       @client ||= Octokit::Client.new(access_token: @github_token)
 
-      response = @client.post('/graphql', { query: query, variables: variables }.to_json)
-
+      response = @client.post('/graphql', { query: query_string, variables: variables }.to_json)
       payload = response.to_h
 
       if payload[:errors]

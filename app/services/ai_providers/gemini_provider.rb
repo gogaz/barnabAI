@@ -42,6 +42,10 @@ module AIProviders
       puts request_body.to_json
       puts "=" * 80
       response = make_api_request("generateContent", request_body)
+      puts "=" * 80
+      puts "GEMINI RESPONSE"
+      puts response.to_json
+      puts "=" * 80
       extract_text_from_response(response)
     rescue StandardError => e
       Rails.logger.error("Gemini API error: #{e.message}")

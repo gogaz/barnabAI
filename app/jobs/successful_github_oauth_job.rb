@@ -33,7 +33,7 @@ class SuccessfulGithubOauthJob < ApplicationJob
 
     Slack::Client.send_message(
       channel: user.slack_user_id,
-      text: "🎉 Your GitHub account *#{github_username}* has been successfully connected!"
+      text: "Hey *#{github_username}* :wink:\nYour GitHub account has been successfully connected :tada:"
     )
   rescue StandardError => e
     Rails.logger.error("SuccessfulGithubOauthJob failed: #{e.message}")

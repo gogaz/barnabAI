@@ -3,10 +3,6 @@
 class GithubOauthController < ApplicationController
   skip_before_action :verify_authenticity_token, only: [:callback]
 
-  # Landing page for GitHub OAuth installation
-  def index
-  end
-
   # Redirect user to GitHub OAuth authorization page
   def authorize
     client_id = ENV.fetch("GITHUB_CLIENT_ID")

@@ -50,7 +50,7 @@ class UpdatePullRequestTeamsJob < ApplicationJob
     return unless files&.any?
 
     # Determine impacted teams using CodeownersMatcher
-    matcher = CodeOwnersMatcher.new(github_service, repository)
+    matcher = Github::CodeOwnersMatcher.new(github_service, repository)
     impacted_teams = matcher.determine_impacted_teams(files)
 
     # Update the PR with impacted teams
