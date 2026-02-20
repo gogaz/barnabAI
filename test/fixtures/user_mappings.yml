@@ -3,11 +3,9 @@
 one:
   slack_user_id: U123
   github_username: Octocat
-  slack_display_name: Catty
-  slack_email: hello@example.com
+  slack_username: Catty
 
 two:
   slack_user_id: U456
   github_username: Einstein
-  slack_display_name: Robert
-  slack_email: hello@mail.com
+  slack_username: Bob
