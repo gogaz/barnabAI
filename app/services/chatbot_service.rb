@@ -26,6 +26,7 @@ class ChatbotService
       Actions::RespondToCommentAction,
       Actions::RunWorkflowAction,
       Actions::GetPRDetailsAction,
+      Actions::GetCheckRunsAction,
       Actions::SearchPullRequestsAction,
       Actions::SummarizeMyCurrentWorkAction,
       Actions::ListUserRepositoriesAction,
@@ -66,8 +67,9 @@ class ChatbotService
         context.add_user_message(text, timestamp: Time.at(msg[:ts].to_f)) if role == :user
         context.add_assistant_message(text, timestamp: Time.at(msg[:ts].to_f)) if role == :assistant
       end
+    else
+      context.add_user_message(user_message)
     end
-    context.add_user_message(user_message)
 
     mappings = UserMapping.where(slack_user_id: required_mappings).to_h do |mapping|
       [mapping.slack_user_id, mapping.slice(:github_username, :slack_username)]
