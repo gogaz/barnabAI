@@ -39,10 +39,10 @@ module Notifications
         )
 
         state_emoji = case review_state
-                      when "APPROVED", "approved" then ":white_check_mark:"
-                      when "CHANGES_REQUESTED", "changes_requested" then ":warning:"
-                      else ":speech_balloon:"
-                      end
+        when "APPROVED", "approved" then ":white_check_mark:"
+        when "CHANGES_REQUESTED", "changes_requested" then ":warning:"
+        else ":speech_balloon:"
+        end
 
         Slack::MessageBuilder.new(text: "New review on #{repo_full_name}##{pr_number}")
           .add_header_block("#{state_emoji} Review on ##{pr_number}")

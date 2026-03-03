@@ -113,9 +113,9 @@ class Recipes::SummarizePrsByTeamsRecipe < Recipes::BaseRecipe
 
         patch = if f[:patch].length > 5000
                   f[:patch].split("\n").first(500).join("\n") + "\n... (truncated)"
-                else
+        else
                   f[:patch]
-                end
+        end
         { filename: f[:filename], patch: patch }
       end
 

@@ -51,68 +51,21 @@ bin/rails db:create && bin/rails db:migrate
 
 ### 3. Slack App Setup
 
-#### 3.1 Create a Slack App
+The repo includes a ready-made app manifest at [`slack_app_manifest.json`](slack_app_manifest.json) that configures all scopes, events, Socket Mode, Home Tab, and interactivity in one shot.
 
-1. Go to [https://api.slack.com/apps](https://api.slack.com/apps)
-2. Click "Create New App" → "From scratch"
-3. Name your app (e.g., "BarnabAI") and select your workspace
-4. Click "Create App"
+#### 3.1 Create the Slack App from Manifest
 
-#### 3.2 Configure OAuth & Permissions
+1. Go to [https://api.slack.com/apps?new_app=1](https://api.slack.com/apps?new_app=1)
+2. Choose **"From an app manifest"**
+3. Select your workspace
+4. Paste the contents of `slack_app_manifest.json` (switch to JSON mode if needed)
+5. Before confirming, replace `YOUR_HOST` in the `redirect_urls` with your actual hostname
+6. Click **Create**
 
-1. Go to **OAuth & Permissions** in the sidebar
-2. Under **Scopes** → **Bot Token Scopes**, add:
-   - `app_mentions:read` - Listen for app mentions
-   - `channels:history` - Read channel history (for threads in public channels)
-   - `channels:read` - View basic info about public channels (required for conversations.replies)
-   - `chat:write` - Send messages
-   - `im:history` - Read direct messages threads
-   - `im:read` - Read direct messages
-   - `im:write` - Send direct messages
-   - `reactions:write` - Add reactions to messages
-   - `users:read` - Read user information
+#### 3.2 Collect Tokens
 
-3. Scroll up and click **Install to Workspace**
-4. Copy the **Bot User OAuth Token** (starts with `xoxb-`) — this is your `SLACK_BOT_TOKEN`
-
-#### 3.3 Enable App Home Tab
-
-1. Go to **App Home** in the sidebar
-2. Toggle **Home Tab** to ON
-
-This enables the notification settings UI — users can toggle notifications on/off from the bot's Home tab in Slack.
-
-#### 3.4 Enable Socket Mode
-
-1. Go to **Socket Mode** in the sidebar
-2. Toggle **Enable Socket Mode** to ON
-3. Click **Generate** to create an App-Level Token
-4. Name it (e.g., "Socket Mode Token")
-5. Add scope: `connections:write`
-6. Copy the **App-Level Token** (starts with `xapp-`)
-
-**Note**: After enabling Socket Mode, make sure to complete step 3.5 (Subscribe to Events) before testing. Socket Mode won't receive events unless they're subscribed.
-
-#### 3.5 Subscribe to Events (Required)
-
-**Important**: Even when using Socket Mode, you must enable and subscribe to events in your Slack app configuration. Socket Mode only changes how events are delivered (via WebSocket instead of HTTP), but you still need to tell Slack which events to send.
-
-1. Go to **Event Subscriptions** in the sidebar
-2. Toggle **Enable Events** to ON
-   - **Note**: You don't need to set a Request URL when using Socket Mode (leave it empty or ignore it)
-3. In **Subscribe to bot events**, add:
-   - `message.im` - Receive direct messages to the bot
-   - `app_mention` - Receive mentions of the bot in channels
-   - `app_home_opened` - Render the Home tab with notification settings
-
-4. Enable **Interactivity & Shortcuts** (sidebar) — this is required for the notification toggle checkboxes in the Home tab to work. No Request URL is needed with Socket Mode.
-
-5. Click **Save Changes** at the bottom
-
-6. **Reinstall the app to your workspace**:
-   - Go back to **OAuth & Permissions**
-   - Click **Reinstall to Workspace** (or **Install to Workspace** if not yet installed)
-   - Authorize the app with the new event subscriptions
+1. Go to **OAuth & Permissions** → click **Install to Workspace** → copy the **Bot User OAuth Token** (starts with `xoxb-`) — this is your `SLACK_BOT_TOKEN`
+2. Go to **Basic Information** → under **App-Level Tokens**, click **Generate Token and Scopes** → name it (e.g., "Socket Mode Token") → add scope `connections:write` → copy the token (starts with `xapp-`) — this is your `SLACK_APP_TOKEN`
 
 ### 4. GitHub OAuth App Setup
 
