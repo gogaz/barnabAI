@@ -254,7 +254,7 @@ module Slack
       def handle_message(data, ws)
         message_type = data["type"]
         Rails.logger.info("handle_message: message_type=#{message_type}")
-        
+
         case message_type
         when "events_api"
           handle_events_api(data, ws)
